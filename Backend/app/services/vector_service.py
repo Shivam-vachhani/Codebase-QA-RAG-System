@@ -1,9 +1,9 @@
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from app.services.parser_service import get_code_files
+from Backend.app.services.loader_service import get_code_files
 from app.services.git_service import clone_repo
-from app.services.splitter_service import chunk_files
+from Backend.app.services.chunking_service import chunk_files
 from app.services.hybrid_retriver_service import HybridRetriever
 from app import config
 

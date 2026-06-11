@@ -1,6 +1,5 @@
 import json,pathlib
 from app import config
-from app.services.git_service import clone_repo
 
 ##----Helper function to extract and format .ipynb content for LLM ingestion----##
 def extract_notebook_content(path_object)->str:

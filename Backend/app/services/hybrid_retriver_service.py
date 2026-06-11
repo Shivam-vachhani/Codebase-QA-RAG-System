@@ -57,7 +57,7 @@ class HybridRetriever:
 
         vector_docs = self.vectorstore.similarity_search(query,k=30)
 
-        merged_docs = self._rrf_merge(bm25_docs,vector_docs,top_n=25)
+        merged_docs = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
 
         pairs = [[query,doc.page_content] for doc in merged_docs]
         scores = self.re_ranker.predict(pairs)

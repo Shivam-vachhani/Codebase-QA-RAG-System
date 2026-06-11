@@ -4,7 +4,7 @@ from  langchain_text_splitters import Language
 ##-----configurations-----##
 OLLAMA_HOST = os.getenv("OLLAMA_HOST","http://localhost:11434")
 CHROMA_PATH = os.getenv("CHROMA_PATH","./data/chroma_db")
-CLONE_TMP = pathlib.Path("/temp/repos")
+CLONE_TMP = pathlib.Path("/tmp/repos")
 
 SUPPORTED ={
     # Backend / Standard languages
@@ -45,7 +45,7 @@ BINARY_EXTENSIONS = {
 IGNORE_DIRS= {"node_modules",".git","__pycache__","dist","build",".venv",".next", "out"}
 
 __all__ = [
-        "OLLAMA_HOST",
+    "OLLAMA_HOST",
     "CHROMA_PATH",
     "CLONE_TMP",
     "SUPPORTED",
