@@ -4,7 +4,7 @@ from langchain_core.documents import Document
 import re
 import hashlib
 
-class HybridRetriever:
+class HybridRetriever():
     def __init__(self,chunks:list[Document],vectorestore):
         """ Called ONCE when your FastAPI app starts.
         Builds the BM25 index and loads the code-optimized reranker model.

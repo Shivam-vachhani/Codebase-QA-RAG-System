@@ -5,7 +5,7 @@ from Backend.app.services.loader_service import get_code_files
 from app.services.git_service import clone_repo
 from Backend.app.services.chunking_service import chunk_files
 from app.services.hybrid_retriver_service import HybridRetriever
-from app import config
+from Backend.app.utils import config
 
 def get_embedding_model()->OllamaEmbeddings:
     """Initializes and returns the local embedding model using Ollama."""
@@ -30,7 +30,7 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
             collection_name="codebase_assistant",
         )
 
-        return True
+        return {"Success":True,"repoId":repo_id}
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
         return False
