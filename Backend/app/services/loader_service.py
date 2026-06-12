@@ -1,5 +1,5 @@
 import json,pathlib
-from Backend.app.utils import config
+from app.utils import config
 
 ##----Helper function to extract and format .ipynb content for LLM ingestion----##
 def extract_notebook_content(path_object)->str:

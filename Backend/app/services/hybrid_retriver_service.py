@@ -4,6 +4,20 @@ from langchain_core.documents import Document
 import re
 import hashlib
 
+_reranker : CrossEncoder | None = None
+
+def get_reranker():
+    global _reranker
+
+    if _reranker is None:
+        print(f"[Reranker] Loding model into memory...")
+        _reranker =CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2",trust_remote_code=True)
+        print(f"[Reranker] Ready.")
+    else:
+        print("[Reranker] Using cached model.")
+    
+    return _reranker
+
 class HybridRetriever():
     def __init__(self,chunks:list[Document],vectorestore):
         """ Called ONCE when your FastAPI app starts.
@@ -16,7 +30,7 @@ class HybridRetriever():
         self.bm25 = BM25Okapi(tokenized)
 
 
-        self.re_ranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
+        self.re_ranker = get_reranker()
 
     def _tokenized_code(self,text:str)->list[str]:
         """Advanced multi-language code tokenizer for BM25.

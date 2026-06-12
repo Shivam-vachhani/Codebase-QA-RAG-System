@@ -1,6 +1,6 @@
 import subprocess
 from uuid import uuid4
-from Backend.app.utils import config
+from app.utils import config
 
 def clone_repo(repo_url:str)->tuple[str,str]:
     

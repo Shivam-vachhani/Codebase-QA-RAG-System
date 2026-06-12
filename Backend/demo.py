@@ -3,6 +3,7 @@
 import os, subprocess, shutil, pathlib,json,re,hashlib
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
@@ -13,6 +14,7 @@ from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
 
 ##-----configurations-----##
 OLLAMA_HOST = os.getenv("OLLAMA_HOST","http://localhost:11434")
@@ -67,6 +69,19 @@ class QueryRequest(BaseModel):
     repo_id:  str
 
 # __ "Hybrid Retriver Class________________________
+
+_reranker : CrossEncoder | None = None
+def get_reranker():
+    global _reranker
+
+    if _reranker is None:
+        print(f"[Reranker] Loding model into memory...")
+        _reranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
+        print(f"[Reranker] Ready.")
+    else:
+        print("[Reranker] Using cached model.")
+    
+    return _reranker
 class HybridRetriever():
     def __init__(self,chunks:list[Document],vectorestore):
         """ Called ONCE when your FastAPI app starts.
@@ -79,7 +94,7 @@ class HybridRetriever():
         self.bm25 = BM25Okapi(tokenized)
 
 
-        self.re_ranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
+        self.re_ranker = get_reranker()
 
     def _tokenized_code(self,text:str)->list[str]:
         """Advanced multi-language code tokenizer for BM25.
@@ -166,6 +181,25 @@ class HybridRetriever():
         return [doc_map[key] for key in sorted_keys[:top_n]]       
 
 # __ "Rag pipeline class"__________________________
+
+_rag_cache:dict[str,"RAGservice"] ={}
+
+def get_rag_service(repo_id:str)-> "RAGservice" :
+
+    if repo_id not in _rag_cache: 
+        print(f"[RAGService] Building service for repo: {repo_id}")
+        _rag_cache[repo_id] = RAGservice(repo_id)
+        print(f"[RAGService] Cached. Total cached repos: {len(_rag_cache)}")
+    else:
+        print(f"[RAGService] Cache hit for repo: {repo_id}")
+    
+    return _rag_cache[repo_id]
+
+def invalidate_cache(repo_id:str):
+    """Call this after re-ingesting a repo so stale data is evicted."""
+    if repo_id in _rag_cache:
+        del _rag_cache[repo_id]
+        print(f"[RAGService] Cache cleared for repo: {repo_id}")
 class RAGservice():
     def __init__(self,repo_id:str):
         vectorestore = load_chroma(repo_id)
@@ -369,7 +403,20 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
         return False
+    
+def load_chroma(repo_id:str):
+    return Chroma(
+        persist_directory=f"{config.CHROMA_PATH}/{repo_id}",
+        embedding_function=get_embedding_model(),
+        collection_name="codebase_assistant"
+    )
 
+def get_all_docs(vectorstore) ->list[Document]:
+    chunks = []
+    raw_data = vectorstore.get(include=["documents","metadatas"])
+    for text,metadata in (zip(raw_data["documents"],raw_data["metadatas"])):
+        chunks.append(Document(page_content=text,metadata=metadata))
+    return chunks
 
 def llm_model():
     return ChatOllama(model="codellama:7b",base_url=OLLAMA_HOST)
@@ -418,15 +465,7 @@ def build_rag_chain():
     ])
 
     return prompt | llm_model() | StrOutputParser()
-
- 
-rag = RAGservice(repo_id="305704ec")
-result = rag.run(question="how is the token implimentation done in this project ?")
-print(result['answer'])       
-
-#-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
+  
 # ── FastAPI app ───────────────────────────────────────────
 app = FastAPI(title="Codebase Q&A")
 
@@ -438,34 +477,53 @@ app.add_middleware(
 )
 
 @app.post("/ingest")
-def ingest(req: IngestRequest):
+async def data_ingestion(req:IngestRequest):
+
+    repo_id,path = clone_repo(str(req.repo_url))
+
     try:
-        repo_id, clone_path = clone_repo(req.repo_url)
-        files               = get_code_files(clone_path)
-        if not files:
-            raise HTTPException(400, "No supported code files found")
-        chunks      = chunk_files(files)
-        embeddings  = OllamaEmbeddings(
-            model="nomic-embed-text", base_url=OLLAMA_HOST
-        )
-        Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=f"{CHROMA_PATH}/{repo_id}"
-        )
-        shutil.rmtree(clone_path, ignore_errors=True)   # cleanup
-        return {"repo_id": repo_id, "files_indexed": len(files),
-                "chunks_created": len(chunks)}
-    except subprocess.CalledProcessError:
-        raise HTTPException(400, "Could not clone repo — check the URL")
+        if not repo_id:
+            raise HTTPException(status_code=400,detail="Clone repo failed please provaid valid url")
+        else:
+            print("Repo clonned....")
+        files = get_code_files(path)
+        print("Files loded....")
+        chunks = chunk_files(files)
+        print("Files chunked....") 
+        response = ingest_documents_to_chroma(chunks,repo_id)
+        print("Repo files stored....")
+        print(response)
+
+    finally:
+        if path and pathlib.Path(path).exists():
+            shutil.rmtree(path,ignore_errors=True)
+            print(f"[Ingest] Cleaned up clone at {path}")
+
+    if(response['status'] == "Success"):
+        return JSONResponse(
+            status_code=200,
+            content=response
+            )   
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Some error occure in storing file in vector store"
+            )
+
 
 @app.post("/query")
-def query(req: QueryRequest):
-    store_path = f"{CHROMA_PATH}/{req.repo_id}"
-    if not pathlib.Path(store_path).exists():
-        raise HTTPException(404, "Repo not ingested yet")
-    return run_rag(req.question, req.repo_id)
+def ask_query(req:QueryRequest):
+    
+    pipeline = get_rag_service(req.repo_id) 
+    response = pipeline.run(req.question)
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+    if response:
+        return JSONResponse(
+            status_code=200,
+            content={
+            "query":req.question,
+            "response":response,
+            }
+         )
+    else:
+        raise HTTPException(status_code=400,detail="Can't genrate response")

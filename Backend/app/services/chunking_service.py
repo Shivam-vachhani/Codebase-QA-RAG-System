@@ -1,6 +1,6 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter,Language
 from app.services.git_service import clone_repo
-from Backend.app.services.loader_service import get_code_files
+from app.services.loader_service import get_code_files
 from langchain_core .documents import Document
 
 #----Function to split code files into manageable chunks for LLM processing----##

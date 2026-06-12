@@ -2,7 +2,7 @@ from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from Backend.app.utils import config
+from app.utils import config
 from dotenv import load_dotenv
 
 load_dotenv()
