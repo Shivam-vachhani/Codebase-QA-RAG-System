@@ -1,4 +1,4 @@
-import pathlib,shutil
+import pathlib,shutil,asyncio
 from fastapi import APIRouter,HTTPException
 from fastapi.responses import JSONResponse
 from app.models.ingest import IngestRequest
@@ -10,30 +10,33 @@ from app.services.rag_service import invalidate_cache
 
 router = APIRouter()
 
-@router.post('/ingest')
-async def data_ingestion(req:IngestRequest):
+def _run_ingest(repo_url: str) -> dict:
+    """Blocking ingest logic — runs in a thread pool via asyncio.to_thread."""
 
-    repo_id,path = clone_repo(str(req.repo_url))
-
+    repo_id, path = clone_repo(repo_url)
+ 
     try:
-
         if not repo_id:
-            raise HTTPException(status_code=400,detail="Clone repo failed please provaid valid url")
-        else:
-            print("Repo clonned....")
-            
+            return {"status": "Failed", "error": "Clone failed — invalid URL or unreachable repo"}, ""
+ 
+        print("Repo cloned....")
         files = get_code_files(path)
-        print("Files loded....")
+        print("Files loaded....")
         chunks = chunk_files(files)
-        print("Files chunked....") 
-        response = ingest_documents_to_chroma(chunks,repo_id)
+        print("Files chunked....")
+        result = ingest_documents_to_chroma(chunks, repo_id)
         print("Repo files stored....")
-        print(response)
-
+        return result,repo_id
+ 
     finally:
         if path and pathlib.Path(path).exists():
-            shutil.rmtree(path,ignore_errors=True)
+            shutil.rmtree(path, ignore_errors=True)
             print(f"[Ingest] Cleaned up clone at {path}")
+
+@router.post("/ingest")
+async def data_ingestion(req:IngestRequest):
+
+    response,repo_id = await asyncio.to_thread(_run_ingest,str(req.repo_url))
 
     if(response['status'] == "Success"):
         invalidate_cache(repo_id)

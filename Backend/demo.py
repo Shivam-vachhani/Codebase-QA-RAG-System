@@ -1,12 +1,14 @@
 # main.py — complete codebase Q&A in one file
 
-import os, subprocess, shutil, pathlib,json,re,hashlib
+import os, subprocess, shutil, pathlib,json,re,hashlib,asyncio
 from uuid import uuid4
+from typing import Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
+from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
 from rank_bm25 import BM25Okapi
@@ -14,6 +16,7 @@ from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from cachetools import LRUCache
 
 
 ##-----configurations-----##
@@ -65,19 +68,26 @@ class IngestRequest(BaseModel):
     repo_url: str
 
 class QueryRequest(BaseModel):
-    question: str
-    repo_id:  str
+    question:str
+    repo_id:str
+    model:Literal["gpt-4o","qwen-2.5"]
 
 # __ "Hybrid Retriver Class________________________
 
 _reranker : CrossEncoder | None = None
+
 def get_reranker():
+
     global _reranker
 
     if _reranker is None:
-        print(f"[Reranker] Loding model into memory...")
-        _reranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
-        print(f"[Reranker] Ready.")
+        try:
+            print(f"[Reranker] Loding model into memory...")
+            _reranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
+            print(f"[Reranker] Ready.")
+        except Exception as e:
+            print(f"[Reranker] Failed to load model: {e}. Reranking will be skipped.")
+            _reranker = None
     else:
         print("[Reranker] Using cached model.")
     
@@ -137,6 +147,10 @@ class HybridRetriever():
 
         merged_docs = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
 
+        if self.re_ranker is None:
+            print("[Retriever] Reranker unavailable — returning RRF-merged results.")
+            return merged_docs[:final_k]
+
         pairs = [[query,doc.page_content] for doc in merged_docs]
         scores = self.re_ranker.predict(pairs)
 
@@ -182,30 +196,34 @@ class HybridRetriever():
 
 # __ "Rag pipeline class"__________________________
 
-_rag_cache:dict[str,"RAGservice"] ={}
+_rag_cache:LRUCache = LRUCache(maxsize=50) 
 
-def get_rag_service(repo_id:str)-> "RAGservice" :
+def get_rag_service(repo_id:str,model:str)-> "RAGservice" :
+    cache_key = (repo_id,model)
 
     if repo_id not in _rag_cache: 
-        print(f"[RAGService] Building service for repo: {repo_id}")
-        _rag_cache[repo_id] = RAGservice(repo_id)
+        print(f"[RAGService] Building service for repo: {repo_id}, model: {model}")
+        _rag_cache[cache_key] = RAGservice(repo_id,model)
         print(f"[RAGService] Cached. Total cached repos: {len(_rag_cache)}")
     else:
-        print(f"[RAGService] Cache hit for repo: {repo_id}")
-    
-    return _rag_cache[repo_id]
+         print(f"[RAGService] Cache hit for repo: {repo_id}, model: {model}")
+
+    return _rag_cache[cache_key]
 
 def invalidate_cache(repo_id:str):
     """Call this after re-ingesting a repo so stale data is evicted."""
-    if repo_id in _rag_cache:
-        del _rag_cache[repo_id]
-        print(f"[RAGService] Cache cleared for repo: {repo_id}")
+    keys_to_delete = [k for k in _rag_cache.keys() if k[0]==repo_id]
+
+    for k in keys_to_delete:
+        del _rag_cache[k]
+    if keys_to_delete:
+        print(f"[RAGService] Cache cleared for repo: {repo_id} ({len(keys_to_delete)} entries)")
 class RAGservice():
-    def __init__(self,repo_id:str):
+    def __init__(self,repo_id:str,model:str):
         vectorestore = load_chroma(repo_id)
         chunks= get_all_docs(vectorestore)
         self.retriever = HybridRetriever(chunks,vectorestore)
-        self.chain = build_rag_chain()
+        self.chain = build_rag_chain(model)
 
     def run(self,question:str)->dict:
         docs = self.retriever.retrieve(question,final_k=5)
@@ -391,6 +409,8 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
         embeddings = get_embedding_model()
         for doc in documents:
             doc.metadata['repo_id'] = repo_id     
+        
+        print(f"[Chroma] Starting embedding of {len(documents)} chunks...")
 
         Chroma.from_documents(
             documents=documents,
@@ -399,14 +419,14 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
             collection_name="codebase_assistant",
         )
 
-        return True
+        return {"status":"Success","repoId":repo_id}
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
-        return False
+        return {"status": "Failed", "error": str(e)}
     
 def load_chroma(repo_id:str):
     return Chroma(
-        persist_directory=f"{config.CHROMA_PATH}/{repo_id}",
+        persist_directory=f"{CHROMA_PATH}/{repo_id}",
         embedding_function=get_embedding_model(),
         collection_name="codebase_assistant"
     )
@@ -418,10 +438,13 @@ def get_all_docs(vectorstore) ->list[Document]:
         chunks.append(Document(page_content=text,metadata=metadata))
     return chunks
 
-def llm_model():
-    return ChatOllama(model="codellama:7b",base_url=OLLAMA_HOST)
+def llm_model(model:str):
+    if model == "gpt-4o":
+            return ChatOpenAI(model="gpt-4o-mini")
+    elif model == "qwen-2.5":
+        return ChatOllama(model="codellama:7b",base_url=OLLAMA_HOST)
 
-def build_rag_chain():
+def build_rag_chain(model:str):
     prompt = ChatPromptTemplate([
         ('system', """You are a senior software engineer and technical mentor helping a developer deeply understand a codebase.
 
@@ -464,7 +487,7 @@ def build_rag_chain():
         ("human", "{question}")
     ])
 
-    return prompt | llm_model() | StrOutputParser()
+    return prompt | llm_model(model) | StrOutputParser()
   
 # ── FastAPI app ───────────────────────────────────────────
 app = FastAPI(title="Codebase Q&A")
@@ -476,30 +499,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _run_ingest(repo_url: str) -> dict:
+    """Blocking ingest logic — runs in a thread pool via asyncio.to_thread."""
+
+    repo_id, path = clone_repo(repo_url)
+ 
+    try:
+        if not repo_id:
+            return {"status": "Failed", "error": "Clone failed — invalid URL or unreachable repo"}, ""
+ 
+        print("Repo cloned....")
+        files = get_code_files(path)
+        print("Files loaded....")
+        chunks = chunk_files(files)
+        print("Files chunked....")
+        result = ingest_documents_to_chroma(chunks, repo_id)
+        print("Repo files stored....")
+        return result,repo_id
+ 
+    finally:
+        if path and pathlib.Path(path).exists():
+            shutil.rmtree(path, ignore_errors=True)
+            print(f"[Ingest] Cleaned up clone at {path}")
+
 @app.post("/ingest")
 async def data_ingestion(req:IngestRequest):
 
-    repo_id,path = clone_repo(str(req.repo_url))
-
-    try:
-        if not repo_id:
-            raise HTTPException(status_code=400,detail="Clone repo failed please provaid valid url")
-        else:
-            print("Repo clonned....")
-        files = get_code_files(path)
-        print("Files loded....")
-        chunks = chunk_files(files)
-        print("Files chunked....") 
-        response = ingest_documents_to_chroma(chunks,repo_id)
-        print("Repo files stored....")
-        print(response)
-
-    finally:
-        if path and pathlib.Path(path).exists():
-            shutil.rmtree(path,ignore_errors=True)
-            print(f"[Ingest] Cleaned up clone at {path}")
+    response,repo_id = await asyncio.to_thread(_run_ingest,str(req.repo_url))
 
     if(response['status'] == "Success"):
+        invalidate_cache(repo_id)
         return JSONResponse(
             status_code=200,
             content=response
@@ -514,7 +543,7 @@ async def data_ingestion(req:IngestRequest):
 @app.post("/query")
 def ask_query(req:QueryRequest):
     
-    pipeline = get_rag_service(req.repo_id) 
+    pipeline = get_rag_service(req.repo_id,req.model) 
     response = pipeline.run(req.question)
 
     if response:

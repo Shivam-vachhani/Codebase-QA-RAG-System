@@ -7,12 +7,17 @@ import hashlib
 _reranker : CrossEncoder | None = None
 
 def get_reranker():
+
     global _reranker
 
     if _reranker is None:
-        print(f"[Reranker] Loding model into memory...")
-        _reranker =CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2",trust_remote_code=True)
-        print(f"[Reranker] Ready.")
+        try:
+            print(f"[Reranker] Loding model into memory...")
+            _reranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
+            print(f"[Reranker] Ready.")
+        except Exception as e:
+            print(f"[Reranker] Failed to load model: {e}. Reranking will be skipped.")
+            _reranker = None
     else:
         print("[Reranker] Using cached model.")
     
@@ -72,6 +77,10 @@ class HybridRetriever():
         vector_docs = self.vectorstore.similarity_search(query,k=30)
 
         merged_docs = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
+
+        if self.re_ranker is None:
+            print("[Retriever] Reranker unavailable — returning RRF-merged results.")
+            return merged_docs[:final_k]
 
         pairs = [[query,doc.page_content] for doc in merged_docs]
         scores = self.re_ranker.predict(pairs)

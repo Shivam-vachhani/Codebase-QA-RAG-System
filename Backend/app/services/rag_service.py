@@ -2,26 +2,31 @@ from app.services.vector_service import load_chroma,get_all_docs
 from app.services.hybrid_retriver_service import HybridRetriever
 from app.services.llm import build_rag_chain
 from langchain_core.documents import Document
+from cachetools import LRUCache
 import time 
 
-_rag_cache:dict[str,"RAGservice"] ={}
+_rag_cache:LRUCache = LRUCache(maxsize=50) 
 
 def get_rag_service(repo_id:str,model:str)-> "RAGservice" :
+    cache_key = (repo_id,model)
 
     if repo_id not in _rag_cache: 
-        print(f"[RAGService] Building service for repo: {repo_id}")
-        _rag_cache[repo_id] = RAGservice(repo_id,model)
+        print(f"[RAGService] Building service for repo: {repo_id}, model: {model}")
+        _rag_cache[cache_key] = RAGservice(repo_id,model)
         print(f"[RAGService] Cached. Total cached repos: {len(_rag_cache)}")
     else:
-        print(f"[RAGService] Cache hit for repo: {repo_id}")
-    
-    return _rag_cache[repo_id]
+         print(f"[RAGService] Cache hit for repo: {repo_id}, model: {model}")
+
+    return _rag_cache[cache_key]
 
 def invalidate_cache(repo_id:str):
     """Call this after re-ingesting a repo so stale data is evicted."""
-    if repo_id in _rag_cache:
-        del _rag_cache[repo_id]
-        print(f"[RAGService] Cache cleared for repo: {repo_id}")
+    keys_to_delete = [k for k in _rag_cache.keys() if k[0]==repo_id]
+
+    for k in keys_to_delete:
+        del _rag_cache[k]
+    if keys_to_delete:
+        print(f"[RAGService] Cache cleared for repo: {repo_id} ({len(keys_to_delete)} entries)")
 
 class RAGservice():
 

@@ -38,7 +38,7 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
         return {"status":"Success","repoId":repo_id}
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
-        return False
+        return {"status": "Failed", "error": str(e)}
 
 def load_chroma(repo_id:str):
     return Chroma(
