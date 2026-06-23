@@ -31,9 +31,11 @@ def invalidate_cache(repo_id:str):
 class RAGservice():
 
     def __init__(self,repo_id:str,model:str):
-        vectorestore = load_chroma(repo_id)
-        chunks= get_all_docs(vectorestore)
-        self.retriever = HybridRetriever(chunks,vectorestore)
+        child_vectorestore = load_chroma(repo_id,collection="child_chunks")
+        parent_vectorestore = load_chroma(repo_id,collection="parent_chunks")
+        
+        child_chunks= get_all_docs(child_vectorestore)
+        self.retriever = HybridRetriever(child_chunks,child_vectorestore,parent_vectorestore)
         self.chain = build_rag_chain(model)
 
     def run(self,question:str)->dict:

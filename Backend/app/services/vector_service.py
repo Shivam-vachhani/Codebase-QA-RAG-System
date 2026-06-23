@@ -53,11 +53,11 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
         print(f"Error ingesting documents to Chroma: {e}")
         return {"status": "Failed", "error": str(e)}
 
-def load_chroma(repo_id:str):
+def load_chroma(repo_id:str,collection:str = "child_chunks"):
     return Chroma(
         persist_directory=f"{config.CHROMA_PATH}/{repo_id}",
         embedding_function=get_embedding_model(),
-        collection_name="codebase_assistant"
+        collection_name=collection
     )
 
 def get_all_docs(vectorstore) ->list[Document]:

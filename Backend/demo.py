@@ -17,6 +17,8 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from cachetools import LRUCache
+from tree_sitter_language_pack import get_language, get_parser  
+import threading
 
 ##-----configurations-----##
 OLLAMA_HOST = os.getenv("OLLAMA_HOST","http://localhost:11434")
@@ -61,7 +63,48 @@ BINARY_EXTENSIONS = {
 
 IGNORE_DIRS= {"node_modules",".git","__pycache__","dist","build",".venv",".next", "out"}
 
+TREESITTER_LANG_MAP = {
+    "python":     "python",
+    "js":         "javascript",
+    "ts":         "typescript",
+    "jsx":        "javascript",
+    "tsx":        "typescript",
+    "java":       "java",
+    "go":         "go",
+    "rs":         "rust",
+    "rb":         "ruby",
+    "php":        "php",
+}
 
+MEANINGFUL_NODE_TYPES = {
+    "typescript": {
+        "function_declaration",
+        "arrow_function",
+        "class_declaration",
+        "method_definition",
+        "interface_declaration",
+        "type_alias_declaration",    
+        "enum_declaration",          
+        "lexical_declaration",     
+    },
+    "javascript": {
+        "function_declaration",
+        "arrow_function",
+        "class_declaration",
+        "method_definition",
+        "lexical_declaration",
+    },
+    "python": {
+        "function_definition",
+        "class_definition",
+        "decorated_definition",
+    },
+    "java":       {"class_declaration", "method_declaration", "constructor_declaration"},
+    "go":         {"function_declaration", "method_declaration", "type_declaration"},
+    "rust":       {"function_item", "impl_item", "struct_item", "enum_item"},
+    "ruby":       {"method", "class", "module"},
+    "php":        {"function_definition", "class_declaration", "method_declaration"},
+}
 # ── models ────────────────────────────────────────────────
 class IngestRequest(BaseModel):
     repo_url: str
@@ -344,54 +387,241 @@ def get_code_files(clone_path:str)->list[dict]:
                     pass 
     return files
 
-#----Function to split code files into manageable chunks for LLM processing----##
-def chunk_files(files: list[dict])->list[Document]:
-    all_chunks = []
-    for f in files:
-        raw_content = f['content']
-        if f['language'] != 'plain_text':
-            splitter = RecursiveCharacterTextSplitter.from_language(
-                language=Language(f['language']),
-                chunk_size=1000,
-                chunk_overlap=200
-            )
+##----Function to split code files into manageable chunks for LLM processing----##
+_thread_local = threading.local()
+
+def _character_fallback(file: dict, chunk_size: int, lable: str) -> list[Document]:
+    """Plain character splitter used when tree-sitter can't parse the file."""
+    spliter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=50,
+        separators=["\n\n", "\n", " ", ""]
+    )
+
+    chunks = spliter.split_text(file["content"])
+    docs = []
+
+    for i, chunk in enumerate(chunks):
+        start_line = file["content"][:file["content"].find(chunk)].count("\n") + 1
+        docs.append(Document(
+            page_content=chunk,
+            metadata={
+                "file_path": file["path"],
+                "language": file["language"],
+                "start_line": start_line,
+                "chunk_type": lable,
+                "node_type": "fallback",
+                "chunk_id": f"{file['path']}_{lable}_{i}",
+            })
+        )
+
+    return docs
+
+
+def get_ts_parser(ts_lang_name: str):
+    """
+    Returns a parser for the current thread.
+    Creates it fresh if this thread doesn't have one yet.
+    Thread-local means no object ever crosses thread boundaries.
+    """
+    if not hasattr(_thread_local, "parsers"):
+        _thread_local.parsers = {}
+
+    if ts_lang_name not in _thread_local.parsers:
+        try:
+            language = get_language(ts_lang_name)
+            parser = get_parser(ts_lang_name)
+            _thread_local.parsers[ts_lang_name] = (language, parser)
+        except Exception as e:
+            print(f"[TreeSitter] Failed to load parser for {ts_lang_name}: {e}")
+            return None, None
+    return _thread_local.parsers[ts_lang_name]
+
+
+def extract_parent_chunks(file: dict) -> list[Document]:
+    """
+    Uses Tree-Sitter to split code at real syntactic boundaries.
+    Returns one Document per function/class — never cuts mid-function.
+    Falls back to character splitter for unsupported languages.
+    """
+    language_str = file['language']
+    content = file['content']
+    path = file["path"]
+
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+
+    if language_str not in TREESITTER_LANG_MAP:
+        return _character_fallback(file, chunk_size=2000, lable="parent")
+
+    ts_lang_name = TREESITTER_LANG_MAP[language_str]
+
+    try:
+        language, parser = get_ts_parser(ts_lang_name)
+
+        if parser is None:
+            return _character_fallback(file, chunk_size=2000, lable="parent")
+
+    except Exception as e:
+        print(f"[TreeSitter] Parser unavailable for {ts_lang_name}: {e} — falling back")
+        return _character_fallback(file, chunk_size=2000, lable="parent")
+
+    tree = None
+    cursor = None
+    try:
+        # parser.parse() accepts str in this library's Rust bindings
+        tree = parser.parse(content)
+        target_node_types = MEANINGFUL_NODE_TYPES.get(ts_lang_name, set())
+        source_line = content.splitlines()
+        parent_chunks = []
+        visited_ranges = []
+
+        # Tree.walk() and Tree.root_node() are both methods (not properties)
+        cursor = tree.walk()
+
+        reached_end = False
+
+        while not reached_end:
+            # TreeCursor.node() — method call, returns a Node object
+            current_node = cursor.node()
+
+            # Node.kind() — method call, returns the node type string (NOT .type)
+            node_kind = current_node.kind()
+
+            if node_kind in target_node_types:
+                # Node.start_position() / end_position() — method calls, return Point
+                # Point has .row and .column attributes
+                start_line = current_node.start_position().row
+                end_line = current_node.end_position().row + 1
+
+                already_covered = any(
+                    s <= start_line and end_line <= e for s, e in visited_ranges
+                )
+
+                if not already_covered:
+                    visited_ranges.append((start_line, end_line))
+                    chunk_text = "\n".join(source_line[start_line:end_line])
+
+                    if chunk_text.strip():
+                        parent_chunks.append(Document(
+                            page_content=chunk_text,
+                            metadata={
+                                "file_path": path,
+                                "language": language_str,
+                                "start_line": start_line + 1,
+                                "end_line": end_line,
+                                "chunk_type": "parent",
+                                "node_type": node_kind,
+                                "chunk_id": f"{path}_parent_{start_line}"
+                            }
+                        ))
+                    if cursor.goto_next_sibling():
+                        continue
+
+            if cursor.goto_first_child():
+                continue
+            if cursor.goto_next_sibling():
+                continue
+
+            while True:
+                if not cursor.goto_parent():
+                    reached_end = True
+                    break
+                if cursor.goto_next_sibling():
+                    break
+
+        covered_lines = set()
+        for s, e in visited_ranges:
+            covered_lines.update(range(s, e))
+
+        uncovered = [(i, line) for i, line in enumerate(source_line) if i not in covered_lines]
+
+        if uncovered:
+            module_text = "\n".join(line for _, line in uncovered)
+            if module_text.strip():
+                parent_chunks.append(Document(
+                    page_content=module_text,
+                    metadata={
+                        "file_path": path,
+                        "language": language_str,
+                        "start_line": 1,
+                        "end_line": len(source_line),
+                        "chunk_type": "parent",
+                        "node_type": "module_level",
+                        "chunk_id": f"{path}_parent_module"
+                    }
+                ))
+
+        if not parent_chunks:
+            print(f"[TreeSitter] No meaningful nodes found in {path} — falling back")
+            return _character_fallback(file, chunk_size=2000, lable="parent")
+
+        return parent_chunks
+    finally:
+        if cursor is not None:
+            del cursor
+        if tree is not None:
+            del tree
+
+
+def create_child_chunks(parent_docs: list[Document]) -> list[Document]:
+    """
+    Splits each parent chunk into small child chunks for embedding search.
+    Children store parent_id so we can look up the full parent at query time.
+    """
+    child_chunks = []
+
+    for parent in parent_docs:
+        language = parent.metadata.get("language", "plain_text")
+        parent_id = parent.metadata["chunk_id"]
+
+        if language in TREESITTER_LANG_MAP:
+            try:
+                lang_enum = Language(language)
+                splitter = RecursiveCharacterTextSplitter.from_language(
+                    language=lang_enum,
+                    chunk_size=300,
+                    chunk_overlap=30,
+                )
+            except Exception:
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=300,
+                    chunk_overlap=30,
+                )
         else:
             splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                separators=["\n\n","\n"," ",""]
+                chunk_size=300,
+                chunk_overlap=30,
             )
 
-        chunks = splitter.split_text(f['content'])
-        total_chunks = len(chunks)
-        current_search_index = 0
+        pieces = splitter.split_text(parent.page_content)
 
-
-        for index,chunk in enumerate(chunks):
-            start_char_pos = raw_content.find(chunk,current_search_index)
-
-            if start_char_pos != -1:
-                start_line = raw_content[:start_char_pos].count("\n")+1
-                current_search_index = start_char_pos + 1
-
-            else:
-                start_line  = 1 
-
-            doc = Document(
-                page_content=chunk,
+        for i, piece in enumerate(pieces):
+            child_chunks.append(Document(
+                page_content=piece,
                 metadata={
-                    "file_path":f['path'],
-                    "language":str(f['language']),
-                    "chunk_index" : index,
-                    "total_chunks": total_chunks - 1 ,
-                    "chunk_id": f"{f['path']}_chunk_{index}",
-                    "start_line": start_line
+                    "file_path": parent.metadata["file_path"],
+                    "language": parent.metadata["language"],
+                    "start_line": parent.metadata["start_line"],
+                    "chunk_type": "child",
+                    "chunk_id": f"{parent_id}_child_{i}",
+                    "parent_id": parent_id
                 }
-              )
-            all_chunks.append(doc)
-    
-    return all_chunks
+            ))
 
+    return child_chunks
+
+
+def chunk_files(files: list[dict]) -> list[Document]:
+    all_docs = []
+    for f in files:
+        parents = extract_parent_chunks(f)
+        children = create_child_chunks(parents)
+        all_docs.extend(parents)
+        all_docs.extend(children)
+    return all_docs
+
+##---- Embedding and Chroma DB functions ----##
 
 def get_embedding_model()->OllamaEmbeddings:
     """Initializes and returns the local embedding model using Ollama."""
@@ -406,29 +636,44 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
     Injects repo_id into metadata to isolate codebase searches later."""
     try:
         embeddings = get_embedding_model()
+
+        parent_docs = [d for d in documents if d.metadata.get("chunk_type") == "parent"]
+        child_docs = [d for d in documents if d.metadata.get("chunk_type") == "child"]
+
         for doc in documents:
             doc.metadata['repo_id'] = repo_id     
         
-        print(f"[Chroma] Starting embedding of {len(documents)} chunks...")
+        print(f"[Chroma] Storing {len(parent_docs)} parents, {len(child_docs)} children...")
 
         Chroma.from_documents(
-            documents=documents,
+            documents=child_docs,
             embedding=embeddings,
             persist_directory=CHROMA_PATH + f"/{repo_id}",
-            collection_name="codebase_assistant",
+            collection_name="child_chunks",
         )
 
-        return {"status":"Success","repoId":repo_id}
+        Chroma.from_documents(
+            documents=parent_docs,
+            embedding=embeddings,
+            persist_directory=CHROMA_PATH + f"/{repo_id}",
+            collection_name="parent_chunks",
+        )
+
+        return {"status":"Success","repoId":repo_id,
+                "parents":len(parent_docs),"childrens":len(child_docs)}
+    
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
         return {"status": "Failed", "error": str(e)}
     
+
 def load_chroma(repo_id:str):
     return Chroma(
         persist_directory=f"{CHROMA_PATH}/{repo_id}",
         embedding_function=get_embedding_model(),
         collection_name="codebase_assistant"
     )
+
 
 def get_all_docs(vectorstore) ->list[Document]:
     chunks = []
@@ -437,11 +682,14 @@ def get_all_docs(vectorstore) ->list[Document]:
         chunks.append(Document(page_content=text,metadata=metadata))
     return chunks
 
+##---- LLM and RAG chain functions ----##
+
 def llm_model(model:str):
     if model == "gpt-4o":
             return ChatOpenAI(model="gpt-4o-mini")
     elif model == "qwen-2.5":
         return ChatOllama(model="codellama:7b",base_url=OLLAMA_HOST)
+
 
 def build_rag_chain(model:str):
     prompt = ChatPromptTemplate([
@@ -520,6 +768,7 @@ def _run_ingest(repo_url: str) -> dict:
         if path and pathlib.Path(path).exists():
             shutil.rmtree(path, ignore_errors=True)
             print(f"[Ingest] Cleaned up clone at {path}")
+
 
 @app.post("/ingest")
 async def data_ingestion(req:IngestRequest):

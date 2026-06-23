@@ -24,17 +24,16 @@ def get_reranker():
     return _reranker
 
 class HybridRetriever():
-    def __init__(self,chunks:list[Document],vectorestore):
-        """ Called ONCE when your FastAPI app starts.
+    def __init__(self,child_chunks:list[Document],child_vectorestore,parent_vectorestore):
+        """ Called ONCE when sever starts.
         Builds the BM25 index and loads the code-optimized reranker model.
         """
-        self.chunks = chunks
-        self.vectorstore = vectorestore
+        self.child_chunks = child_chunks
+        self.child_vectorstore = child_vectorestore
+        self.parent_vectorstore= parent_vectorestore
 
-        tokenized = [self._tokenized_code(doc.page_content) for doc in chunks]
+        tokenized = [self._tokenized_code(doc.page_content) for doc in child_chunks]
         self.bm25 = BM25Okapi(tokenized)
-
-
         self.re_ranker = get_reranker()
 
     def _tokenized_code(self,text:str)->list[str]:
@@ -64,7 +63,7 @@ class HybridRetriever():
     def retrieve(self,query:str,final_k:int=5)->list[Document]:
         """
         Called on EVERY user query.
-        Runs BM25 + Vector in parallel, merges via RRF, reranks, returns best chunks.
+        Runs BM25 + Vector in parallel, merges via RRF, reranks, returns best child_chunks.
         """
 
         tokenized_query = self._tokenized_code(query)
@@ -72,23 +71,60 @@ class HybridRetriever():
         top10_index = sorted(range(len(bm25_scores)),
                              key= lambda i:bm25_scores[i],
                              reverse=True)[:30]
-        bm25_docs = [self.chunks[i] for i  in top10_index ]
+        bm25_docs = [self.child_chunks[i] for i  in top10_index ]
 
-        vector_docs = self.vectorstore.similarity_search(query,k=30)
+        vector_docs = self.child_vectorstore.similarity_search(query,k=30)
 
-        merged_docs = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
+        merged_children = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
 
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
-            return merged_docs[:final_k]
+            return merged_children[:final_k]
 
-        pairs = [[query,doc.page_content] for doc in merged_docs]
+        pairs = [[query,doc.page_content] for doc in merged_children]
         scores = self.re_ranker.predict(pairs)
+        ranked = sorted(zip(merged_children,scores),key=lambda x:x[1],reverse=True)
 
-        ranked = sorted(zip(merged_docs,scores),key=lambda x:x[1],reverse=True)
+        top_children = [doc for doc, _ in ranked[:final_k] ]
 
-        return [doc for doc,_ in ranked[:final_k]]
+        parent_docs = self._fetch_parents(top_children)
+        for doc in parent_docs:
+            print(doc.page_content)
+        return parent_docs
+            
 
+    def _fetch_parents(self,child_docs:list[Document])->list[Document]:
+        """
+        Given child chunks, look up their full parent chunks from Chroma.
+        Deduplicates — multiple children from the same function return one parent.
+        """
+        seen_parent_ids = set()
+        parents=[]
+
+        for child in child_docs:
+            parent_id = child.metadata.get("parent_id")
+
+            if not parent_id or parent_id in seen_parent_ids:
+                continue
+
+            seen_parent_ids.add(parent_id)
+
+            result = self.parent_vectorstore.get(
+                where={"chunk_id":parent_id},
+                include=["documents","metadatas"]
+            )
+
+            if result["documents"]:
+                parents.append(Document(
+                    page_content=result["documents"][0],
+                    metadata = result["metadatas"][0]
+                ))
+            else:
+                print(f"[Retriever] Parent {parent_id} not found — using child")
+                parents.append(child)
+
+        return parents 
+    
 
     def _rrf_merge(self,
                    bm25_docs:list[Document],

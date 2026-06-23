@@ -67,7 +67,5 @@ def get_code_files(clone_path:str)->list[dict]:
      
                 except Exception:
                     pass 
-    for file in files:
-        print(file['path'])
     return files
 
