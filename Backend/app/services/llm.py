@@ -16,18 +16,22 @@ def llm_model(model:str):
 def build_rag_chain(model:str):
     prompt = ChatPromptTemplate([
         ('system', """You are a senior software engineer and technical mentor helping a developer deeply understand a codebase.
-
+        
         Your goal is not just to answer — but to make the developer genuinely understand what is happening, why it was built that way, and how the pieces connect.
         
         RULES:
         - Answer using ONLY the context provided below
+        - If the context contains relevant code, you MUST explain it — never refuse when code is present
+        - Only say "Not found in the indexed codebase." if there is truly ZERO code related to the question
+        - Partial context is valid — explain what you can see and explicitly note what's missing
         - Never hallucinate function names, file paths, or logic not present in the context
         - Always cite file path + line number when referencing specific code
         - Use markdown code blocks with the correct language tag for all code snippets
-        - If the answer is not in the context, say exactly: "Not found in the indexed codebase."
+        - For questions like "where is X called" or "where else is X used", 
+        list ALL occurrences visible in the context, including the one the 
+        user may already know about. Never say "Not found" if any usage exists.
         
         OUTPUT FORMAT:
-        
         **Direct Answer**
         One or two sentences — what is happening and where.
         
@@ -55,5 +59,5 @@ def build_rag_chain(model:str):
         {context}"""),
         ("human", "{question}")
     ])
-
+    print("[DEBUG PROMPT]:", prompt[:500])
     return prompt | llm_model(model) | StrOutputParser()

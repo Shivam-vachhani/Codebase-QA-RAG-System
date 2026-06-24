@@ -44,6 +44,15 @@ BINARY_EXTENSIONS = {
 
 IGNORE_DIRS= {"node_modules",".git","__pycache__","dist","build",".venv",".next", "out"}
 
+IGNORE_FILES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "composer.lock",
+    "Gemfile.lock",
+    "poetry.lock",
+    "Cargo.lock",
+}
 
 TREESITTER_LANG_MAP = {
     "python":     "python",
@@ -66,15 +75,13 @@ MEANINGFUL_NODE_TYPES = {
         "method_definition",
         "interface_declaration",
         "type_alias_declaration",    
-        "enum_declaration",          
-        "lexical_declaration",     
+        "enum_declaration",              
     },
     "javascript": {
         "function_declaration",
         "arrow_function",
         "class_declaration",
         "method_definition",
-        "lexical_declaration",
     },
     "python": {
         "function_definition",

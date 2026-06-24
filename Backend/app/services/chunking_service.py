@@ -92,21 +92,17 @@ def extract_parent_chunks(file: dict) -> list[Document]:
         parent_chunks = []
         visited_ranges = []
 
-        # Tree.walk() and Tree.root_node() are both methods (not properties)
         cursor = tree.walk()
 
         reached_end = False
 
         while not reached_end:
-            # TreeCursor.node() — method call, returns a Node object
             current_node = cursor.node()
 
-            # Node.kind() — method call, returns the node type string (NOT .type)
             node_kind = current_node.kind()
 
             if node_kind in target_node_types:
-                # Node.start_position() / end_position() — method calls, return Point
-                # Point has .row and .column attributes
+
                 start_line = current_node.start_position().row
                 end_line = current_node.end_position().row + 1
 

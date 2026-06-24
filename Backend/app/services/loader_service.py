@@ -34,10 +34,11 @@ def get_code_files(clone_path:str)->list[dict]:
             continue
 
         if p.is_file():
+    
             ext = p.suffix.lower()
             file_name =p.name.lower()
 
-            if ext in config.BINARY_EXTENSIONS:
+            if ext in config.BINARY_EXTENSIONS or file_name in config.IGNORE_FILES:
                 continue
 
             lang_enum =None

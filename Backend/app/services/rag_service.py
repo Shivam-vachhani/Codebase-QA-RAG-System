@@ -10,7 +10,7 @@ _rag_cache:LRUCache = LRUCache(maxsize=50)
 def get_rag_service(repo_id:str,model:str)-> "RAGservice" :
     cache_key = (repo_id,model)
 
-    if repo_id not in _rag_cache: 
+    if cache_key not in _rag_cache: 
         print(f"[RAGService] Building service for repo: {repo_id}, model: {model}")
         _rag_cache[cache_key] = RAGservice(repo_id,model)
         print(f"[RAGService] Cached. Total cached repos: {len(_rag_cache)}")

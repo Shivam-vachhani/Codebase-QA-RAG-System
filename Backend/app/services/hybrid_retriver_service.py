@@ -75,7 +75,7 @@ class HybridRetriever():
 
         vector_docs = self.child_vectorstore.similarity_search(query,k=30)
 
-        merged_children = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
+        merged_children = self._rrf_merge(bm25_docs,vector_docs,top_n=20)
 
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
@@ -99,15 +99,21 @@ class HybridRetriever():
         Deduplicates — multiple children from the same function return one parent.
         """
         seen_parent_ids = set()
+        file_counts={}
         parents=[]
 
         for child in child_docs:
             parent_id = child.metadata.get("parent_id")
+            file_path = child.metadata.get("file_path", "")
 
             if not parent_id or parent_id in seen_parent_ids:
                 continue
-
+            
+            if file_counts.get(file_path,0)>=2:
+                continue
+            
             seen_parent_ids.add(parent_id)
+            file_counts[file_path] = file_counts.get(file_path, 0) + 1
 
             result = self.parent_vectorstore.get(
                 where={"chunk_id":parent_id},
@@ -149,10 +155,12 @@ class HybridRetriever():
 
                 file_path = str(doc.metadata.get("file_path", "")).lower()
                 language = str(doc.metadata.get("language", "")).lower()
+                content_len = len(doc.page_content)
 
                 if file_path.endswith(".md") or language == "markdown" or "readme" in file_path:
                     base_score *= 0.40
-
+                if content_len > 1500:
+                    base_score *= 0.60
                 scores[key] = scores.get(key,0.0) + base_score
 
                 if key not in doc_map or len(doc.metadata) > len(doc_map[key].metadata):

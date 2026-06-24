@@ -105,6 +105,7 @@ MEANINGFUL_NODE_TYPES = {
     "ruby":       {"method", "class", "module"},
     "php":        {"function_definition", "class_declaration", "method_declaration"},
 }
+
 # ── models ────────────────────────────────────────────────
 class IngestRequest(BaseModel):
     repo_url: str
@@ -134,6 +135,7 @@ def get_reranker():
         print("[Reranker] Using cached model.")
     
     return _reranker
+
 class HybridRetriever():
     def __init__(self,child_chunks:list[Document],child_vectorestore,parent_vectorestore):
         """ Called ONCE when sever starts.
@@ -288,6 +290,7 @@ def get_rag_service(repo_id:str,model:str)-> "RAGservice" :
 
     return _rag_cache[cache_key]
 
+
 def invalidate_cache(repo_id:str):
     """Call this after re-ingesting a repo so stale data is evicted."""
     keys_to_delete = [k for k in _rag_cache.keys() if k[0]==repo_id]
@@ -296,8 +299,8 @@ def invalidate_cache(repo_id:str):
         del _rag_cache[k]
     if keys_to_delete:
         print(f"[RAGService] Cache cleared for repo: {repo_id} ({len(keys_to_delete)} entries)")
-class RAGservice():
 
+class RAGservice():
     def __init__(self,repo_id:str,model:str):
         child_vectorestore = load_chroma(repo_id,collection="child_chunks")
         parent_vectorestore = load_chroma(repo_id,collection="parent_chunks")
@@ -344,6 +347,7 @@ class RAGservice():
         )
             parts.append(f"{header}\n```{doc.metadata['language']}\n{doc.page_content}\n```")
         return '\n\n---\n\n'.join(parts)
+
 # ──  "services" ───────────────────────────
 def clone_repo(repo_url:str)->tuple[str,str]:
     
@@ -384,8 +388,6 @@ def extract_notebook_content(path_object)->str:
     except Exception as e:
         print(f"Failed to cleanly extract notebook {path_object.name}:{e}")
         return ""
-
-
 
 ##----Main function to traverse cloned repo and extract code files----##
 def get_code_files(clone_path:str)->list[dict]:
@@ -789,6 +791,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 def _run_ingest(repo_url: str) -> dict:
     """Blocking ingest logic — runs in a thread pool via asyncio.to_thread."""
