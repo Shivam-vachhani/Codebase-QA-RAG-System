@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-stone-50 text-stone-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d6d3d1 transparent;
+  }
+
+  .dark .scrollbar-thin {
+    scrollbar-color: #52525b transparent;
+  }
+}
+
+/* Custom logo loading animation */
+.logo-animated .logo-ring {
+  transform-origin: 24px 24px;
+  animation: logoRingSpin 2.4s linear infinite;
+}
+
+.logo-animated .logo-core {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: logoCorePulse 1.4s ease-in-out infinite;
+}
+
+.logo-animated .logo-brace-left {
+  transform-origin: 24px 24px;
+  animation: logoBraceLeft 1.8s ease-in-out infinite;
+}
+
+.logo-animated .logo-brace-right {
+  transform-origin: 24px 24px;
+  animation: logoBraceRight 1.8s ease-in-out infinite;
+}
+
+.logo-animated .logo-rays {
+  transform-origin: 24px 24px;
+  animation: logoRaysFade 1.4s ease-in-out infinite;
+}
+
+@keyframes logoRingSpin {
+  0% { transform: rotate(0deg); opacity: 0.7; }
+  50% { opacity: 1; }
+  100% { transform: rotate(360deg); opacity: 0.7; }
+}
+
+@keyframes logoCorePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.75; }
+}
+
+@keyframes logoBraceLeft {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(-1.5px); }
+}
+
+@keyframes logoBraceRight {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(1.5px); }
+}
+
+@keyframes logoRaysFade {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+/* Shimmer text for loading state */
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    #a8a29e 0%,
+    #e07a4a 40%,
+    #a8a29e 80%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+
+.dark .text-shimmer {
+  background: linear-gradient(
+    90deg,
+    #71717a 0%,
+    #f4a261 40%,
+    #71717a 80%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
