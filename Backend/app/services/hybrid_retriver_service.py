@@ -65,7 +65,17 @@ class HybridRetriever():
         Called on EVERY user query.
         Runs BM25 + Vector in parallel, merges via RRF, reranks, returns best child_chunks.
         """
-
+        
+        ref_match = re.search(
+            r'where.*?[`"\']?(\w+)[`"\']?\s*(is\s*)?(called|used|imported|referenced)',
+        query, re.IGNORECASE
+         )
+    
+        if ref_match:
+            symbol = ref_match.group(1)
+            print(f"[Retriever] Symbol lookup detected: {symbol}")
+            return self._symbol_search(symbol, final_k)
+        
         tokenized_query = self._tokenized_code(query)
         bm25_scores = self.bm25.get_scores(tokenized_query)
         top10_index = sorted(range(len(bm25_scores)),
@@ -167,4 +177,12 @@ class HybridRetriever():
                     doc_map[key] = doc
 
         sorted_keys = sorted(scores,key = lambda x:scores[x],reverse=True)
-        return [doc_map[key] for key in sorted_keys[:top_n]]       
+        return [doc_map[key] for key in sorted_keys[:top_n]]
+
+    def _symbol_search(self,symbol:str,k:int)->list[Document]:
+        """Exact string match across all child chunks, then fetch parents."""
+        matches = [doc for doc in self.child_chunks if symbol in doc.page_content and doc.metadata.get("node_type") != "fallback"]  
+
+        scored = sorted(matches,key= lambda d:d.page_content.count(symbol),reverse=True)
+        top= scored[:k]
+        return self._fetch_parents(top)    

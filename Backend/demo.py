@@ -22,8 +22,8 @@ import threading
 
 ##-----configurations-----##
 OLLAMA_HOST = os.getenv("OLLAMA_HOST","http://localhost:11434")
-CHROMA_PATH = os.getenv("CHROMA_PATH","./data/chroma_db")
-CLONE_TMP = pathlib.Path("/temp/repos")
+CHROMA_PATH = os.getenv("CHROMA_PATH","../Database/chroma_db")
+CLONE_TMP = pathlib.Path("../Database/tmp")
 
 SUPPORTED ={
     # Backend / Standard languages
@@ -62,6 +62,16 @@ BINARY_EXTENSIONS = {
     ".lock", ".db", ".sqlite" }                                  
 
 IGNORE_DIRS= {"node_modules",".git","__pycache__","dist","build",".venv",".next", "out"}
+
+IGNORE_FILES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "composer.lock",
+    "Gemfile.lock",
+    "poetry.lock",
+    "Cargo.lock",
+}
 
 TREESITTER_LANG_MAP = {
     "python":     "python",
@@ -178,7 +188,17 @@ class HybridRetriever():
         Called on EVERY user query.
         Runs BM25 + Vector in parallel, merges via RRF, reranks, returns best child_chunks.
         """
-
+        
+        ref_match = re.search(
+            r'where.*?[`"\']?(\w+)[`"\']?\s*(is\s*)?(called|used|imported|referenced)',
+        query, re.IGNORECASE
+         )
+    
+        if ref_match:
+            symbol = ref_match.group(1)
+            print(f"[Retriever] Symbol lookup detected: {symbol}")
+            return self._symbol_search(symbol, final_k)
+        
         tokenized_query = self._tokenized_code(query)
         bm25_scores = self.bm25.get_scores(tokenized_query)
         top10_index = sorted(range(len(bm25_scores)),
@@ -188,7 +208,7 @@ class HybridRetriever():
 
         vector_docs = self.child_vectorstore.similarity_search(query,k=30)
 
-        merged_children = self._rrf_merge(bm25_docs,vector_docs,top_n=10)
+        merged_children = self._rrf_merge(bm25_docs,vector_docs,top_n=20)
 
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
@@ -212,15 +232,21 @@ class HybridRetriever():
         Deduplicates — multiple children from the same function return one parent.
         """
         seen_parent_ids = set()
+        file_counts={}
         parents=[]
 
         for child in child_docs:
             parent_id = child.metadata.get("parent_id")
+            file_path = child.metadata.get("file_path", "")
 
             if not parent_id or parent_id in seen_parent_ids:
                 continue
-
+            
+            if file_counts.get(file_path,0)>=2:
+                continue
+            
             seen_parent_ids.add(parent_id)
+            file_counts[file_path] = file_counts.get(file_path, 0) + 1
 
             result = self.parent_vectorstore.get(
                 where={"chunk_id":parent_id},
@@ -262,17 +288,27 @@ class HybridRetriever():
 
                 file_path = str(doc.metadata.get("file_path", "")).lower()
                 language = str(doc.metadata.get("language", "")).lower()
+                content_len = len(doc.page_content)
 
                 if file_path.endswith(".md") or language == "markdown" or "readme" in file_path:
                     base_score *= 0.40
-
+                if content_len > 1500:
+                    base_score *= 0.60
                 scores[key] = scores.get(key,0.0) + base_score
 
                 if key not in doc_map or len(doc.metadata) > len(doc_map[key].metadata):
                     doc_map[key] = doc
 
         sorted_keys = sorted(scores,key = lambda x:scores[x],reverse=True)
-        return [doc_map[key] for key in sorted_keys[:top_n]]       
+        return [doc_map[key] for key in sorted_keys[:top_n]]
+
+    def _symbol_search(self,symbol:str,k:int)->list[Document]:
+        """Exact string match across all child chunks, then fetch parents."""
+        matches = [doc for doc in self.child_chunks if symbol in doc.page_content and doc.metadata.get("node_type") != "fallback"]  
+
+        scored = sorted(matches,key= lambda d:d.page_content.count(symbol),reverse=True)
+        top= scored[:k]
+        return self._fetch_parents(top)    
 
 # __ "Rag pipeline class"__________________________
 
@@ -281,7 +317,7 @@ _rag_cache:LRUCache = LRUCache(maxsize=50)
 def get_rag_service(repo_id:str,model:str)-> "RAGservice" :
     cache_key = (repo_id,model)
 
-    if repo_id not in _rag_cache: 
+    if cache_key not in _rag_cache: 
         print(f"[RAGService] Building service for repo: {repo_id}, model: {model}")
         _rag_cache[cache_key] = RAGservice(repo_id,model)
         print(f"[RAGService] Cached. Total cached repos: {len(_rag_cache)}")
@@ -398,10 +434,11 @@ def get_code_files(clone_path:str)->list[dict]:
             continue
 
         if p.is_file():
+    
             ext = p.suffix.lower()
             file_name =p.name.lower()
 
-            if ext in BINARY_EXTENSIONS:
+            if ext in BINARY_EXTENSIONS or file_name in IGNORE_FILES:
                 continue
 
             lang_enum =None
@@ -428,7 +465,7 @@ def get_code_files(clone_path:str)->list[dict]:
                             "language":lang_enum.value if lang_enum else "plain_text",
                             "content": content_to_save
                       })
-                        
+     
                 except Exception:
                     pass 
     return files
@@ -740,18 +777,22 @@ def llm_model(model:str):
 def build_rag_chain(model:str):
     prompt = ChatPromptTemplate([
         ('system', """You are a senior software engineer and technical mentor helping a developer deeply understand a codebase.
-
+        
         Your goal is not just to answer — but to make the developer genuinely understand what is happening, why it was built that way, and how the pieces connect.
         
         RULES:
         - Answer using ONLY the context provided below
+        - If the context contains relevant code, you MUST explain it — never refuse when code is present
+        - Only say "Not found in the indexed codebase." if there is truly ZERO code related to the question
+        - Partial context is valid — explain what you can see and explicitly note what's missing
         - Never hallucinate function names, file paths, or logic not present in the context
         - Always cite file path + line number when referencing specific code
         - Use markdown code blocks with the correct language tag for all code snippets
-        - If the answer is not in the context, say exactly: "Not found in the indexed codebase."
+        - For questions like "where is X called" or "where else is X used", 
+        list ALL occurrences visible in the context, including the one the 
+        user may already know about. Never say "Not found" if any usage exists.
         
         OUTPUT FORMAT:
-        
         **Direct Answer**
         One or two sentences — what is happening and where.
         
@@ -779,7 +820,7 @@ def build_rag_chain(model:str):
         {context}"""),
         ("human", "{question}")
     ])
-
+    print("[DEBUG PROMPT]:", prompt[:500])
     return prompt | llm_model(model) | StrOutputParser()
   
 # ── FastAPI app ───────────────────────────────────────────

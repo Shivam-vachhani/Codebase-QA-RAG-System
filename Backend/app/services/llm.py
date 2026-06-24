@@ -59,5 +59,4 @@ def build_rag_chain(model:str):
         {context}"""),
         ("human", "{question}")
     ])
-    print("[DEBUG PROMPT]:", prompt[:500])
     return prompt | llm_model(model) | StrOutputParser()

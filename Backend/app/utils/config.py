@@ -3,8 +3,8 @@ from  langchain_text_splitters import Language
 
 ##-----configurations-----##
 OLLAMA_HOST = os.getenv("OLLAMA_HOST","http://localhost:11434")
-CHROMA_PATH = os.getenv("CHROMA_PATH","./data/chroma_db")
-CLONE_TMP = pathlib.Path("./tmp/repos")
+CHROMA_PATH = os.getenv("CHROMA_PATH","../Database/chroma_db")
+CLONE_TMP = pathlib.Path("../Database/tmp")
 
 SUPPORTED ={
     # Backend / Standard languages
