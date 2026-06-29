@@ -49,6 +49,7 @@ SUPPORTED ={
 
 TEXT_FALLBACKS = {".json", ".yaml", ".yml", ".txt", ".css", ".toml", ".ini", ".conf", ".env"}
 
+SUMMARY_LLM_MODEL = "gpt-4o-mini"
 
 EXACT_TEXT_FILES = {"dockerfile", "jenkinsfile", "procfile", "makefile"}
 
@@ -470,6 +471,154 @@ def get_code_files(clone_path:str)->list[dict]:
                     pass 
     return files
 
+##----Function to repo summarization using LLM----##
+def _get_summary_llm():
+    return ChatOpenAI(model=SUMMARY_LLM_MODEL,temperature=0)
+
+
+def summarize_file(file:dict) -> str:
+     """Generate a summary for a single file. Called during ingest."""
+     llm = _get_summary_llm()
+
+     content_priview = file["content"][:6000]
+
+     prompt = f""" you are summerizing a source code file for a codebase search index.
+
+    File:{file['path']}
+    Language:{file['language']}
+
+    ```{file['language']}
+    {content_priview}
+    ```
+    Write a concise technical summary(4-8 sentance) covering:
+    -What this file's primary responsibility is 
+    -key classes, funcions or exports its defines
+    -What other parts of the system it depends on it
+    -Any important patterns and design decisions visible here
+
+    Be Specific and technical. No fluff."""
+     
+     response = llm.invoke(prompt)
+     return response.content
+
+
+def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
+     llm = _get_summary_llm()   
+
+     files_overview = "\n".join(
+          f"{s["file_path"]}:{s["summary"]}"
+          for s in file_summeries[:20]
+     ) 
+      
+     prompt = f""" you are summarizing a folder/module in codebase for a search index.
+     Folder: {folder_path}
+     Files in this folder:
+     {files_overview}
+ 
+     Write a concise technical summarie(4-6 sentence) covering:
+     -what this folder/module is responsible for
+     -How its file related to each other
+     -What the rest of the codebase uses this module for 
+     -Any key architecute patterns
+ 
+     Be specific and technical """
+    
+     response = llm.invoke(prompt)
+     return response.content
+
+
+def summerize_repo(repo_summary_input:dict) -> str:
+     llm = _get_summary_llm()
+
+     folder_overview = "\n".join(
+          f"{path}:{summary}"
+          for path,summary in list(repo_summary_input["folder_summaries"].items())[:15] 
+     )
+
+     file_tree_sample = "\n".join(repo_summary_input["file_tree"][:50])
+
+     prompt=f"""you are genarating a top-level over view of the codebase for devloper assistant.
+
+     File tree(sample):
+     {file_tree_sample}
+
+     Module Summaries:
+     {folder_overview}
+
+     Write through technical overview (8-12 sentances) covering:
+     -What this project does and its primary purpose
+     -The main technology and framewoks used
+     -The high level architecture (frontend/backend/services/etc.)
+     -Key modules and what each is responsible for 
+     -how data flows through the system at high level 
+     -who the likely audiance/user of this system are
+
+     Be spicific. Referance actual folde and file names."""
+
+     response = llm.invoke(prompt)
+     return response.content
+
+
+def build_summary_index(files:list[dict],repo_id:str) -> dict:
+    """
+    Builds the full summary hierarchy during ingest.
+    Returns structured summary data ready for Chroma storage.
+    """
+    print(f"[Summaries] Generating {len(files)} file summaries...")
+
+    file_summaries = []
+
+    summarizable = [ f for f in files 
+                     if f["language"] != "plain_text"
+                     and len(f["content"].strip()) > 100
+                    ]
+
+
+    for i,file in enumerate(summarizable):
+         try:
+              summary_text = summarize_file(file)
+              file_summaries.append({
+                   "file_path":file["path"],
+                   "language":file["language"],
+                   "summary":summary_text,
+              })
+              
+              if i % 10 == 0:
+                   print(f"[Summaries] {i}/{len(summarizable)} files done...")
+         except Exception as e:
+            print(f"[Summaries] Failed to summarize {file['path']}: {e}")
+            continue
+
+
+    print("[Summaries] Generating folder summaries...")  
+
+    folder_map: dict[str , list[dict]] = {}
+    for fs in file_summaries:
+         folder = str(pathlib.Path(fs["file_path"]).parent)
+         folder_map.setdefault(folder,[]).append(fs) 
+         
+    folder_summaries={}
+    for folder_path,folder_files in folder_map.items():
+         if len(folder_files) == 0:
+              continue
+         try:
+              folder_summaries[folder_path] = summerize_folder(folder_path,folder_files)
+         except Exception as e:
+              print(f"[Summaries] Failed to summarize folder {folder_path}: {e}")
+    
+    print("[Summaries] Generating repo-level summary...") 
+    file_tree = sorted(f["path"] for f in files) 
+    repo_summary_text = summerize_repo({
+         "folder_summaries":folder_summaries,
+         "file_tree":file_tree
+    }) 
+    return{
+         "repo_summary":repo_summary_text,
+         "folder_summary":folder_summaries,
+         "file_summary":file_summaries,
+    }
+
+
 ##----Function to split code files into manageable chunks for LLM processing----##
 _thread_local = threading.local()
 
@@ -748,8 +897,57 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
         return {"status": "Failed", "error": str(e)}
+   
     
-    
+def ingest_summaries_to_chroma(summaries:dict,repo_id:str):
+     """Store all summary documents in a dedicated Chroma collection."""
+     embeddings = get_embedding_model()
+     summary_docs = []
+
+     summary_docs.append(Document(
+         page_content=summaries["repo_summary"],
+         metadata={
+            "repo_id": repo_id,
+            "summary_type": "repo",
+            "file_path": "__repo__",
+            "chunk_id": f"{repo_id}_repo_summary"
+         }
+     ))
+
+     for folder_path,summary_text in summaries["folder_summary"].items():
+         summary_docs.append(Document(
+             page_content=summary_text,
+             metadata={
+                "repo_id": repo_id,
+                "summary_type": "folder",
+                "file_path": folder_path,
+                "chunk_id": f"{repo_id}_folder_{folder_path}"
+             }
+         ))
+         
+     for fs in summaries["file_summary"]:
+         summary_docs.append(Document(
+             page_content=fs["summary"],
+             metadata={
+                 "repo_id":repo_id,
+                 "summary_type":"file",
+                 "file_path":fs["file_path"],
+                 "language":fs["language"],
+                 "chunk_id":f"{repo_id}_file_{fs['file_path']}",
+
+             }
+         ))
+     Chroma.from_documents(
+         documents=summary_docs,
+         embedding= embeddings,
+         persist_directory=f"{CHROMA_PATH}/{repo_id}",
+         collection_name="summaries",
+     )
+     for print_doc in summary_docs:
+         print(f"docs: {print_doc}\n\n")
+     print(f"[Summaries] Stored {len(summary_docs)} summary documents.")
+
+
 def load_chroma(repo_id:str,collection:str = "child_chunks"):
     return Chroma(
         persist_directory=f"{config.CHROMA_PATH}/{repo_id}",
@@ -847,9 +1045,33 @@ def _run_ingest(repo_url: str) -> dict:
         files = get_code_files(path)
         print("Files loaded....")
         chunks = chunk_files(files)
+
+        # print("\n" + "="*50 + " INSPECTING PARENT CHUNKS " + "="*50)
+        # # Filter out only the parent chunks from the complete list
+        # parent_docs = [doc for doc in chunks if doc.metadata.get("chunk_type") == "parent"]
+        # for idx, doc in enumerate(parent_docs[100:130]):  # Limits to first 10 so it doesn't flood your console
+        #     print(f"\n[Parent Chunk #{idx+1}]")
+        #     print(f"File: {doc.metadata.get('file_path')}")
+        #     print(f"Node Type: {doc.metadata.get('node_type')}")
+        #     print(f"Lines: {doc.metadata.get('start_line')} to {doc.metadata.get('end_line')}")
+        #     print(f"ID: {doc.metadata.get('chunk_id')}")
+        #     print("-" * 40)
+        #     # Show the first 3 lines of the actual code chunk
+        #     code_lines = doc.page_content.splitlines()
+        #     preview = "\n".join(code_lines[:3])
+        #     print(preview)
+        #     if len(code_lines) > 3:
+        #         print("... (truncated) ...")
+        
+        # print(f"\nTotal Parents Extracted: {len(parent_docs)}")
+        # print("="*126 + "\n")
+
         print("Files chunked....")
         result = ingest_documents_to_chroma(chunks, repo_id)
         print("Repo files stored....")
+        summaries = build_summary_index(files,repo_id)
+        ingest_documents_to_chroma(summaries,repo_id)
+    
         return result,repo_id
  
     finally:

@@ -5,7 +5,7 @@ from app.models.ingest import IngestRequest
 from app.services.git_service import clone_repo
 from app.services.loader_service import get_code_files
 from app.services.chunking_service import chunk_files
-from app.services.vector_service import ingest_documents_to_chroma
+from app.services.vector_service import ingest_documents_to_chroma,ingest_summaries_to_chroma
 from app.services.rag_service import invalidate_cache
 from app.services.summary_service import build_summary_index
 
@@ -50,7 +50,7 @@ def _run_ingest(repo_url: str) -> dict:
         result = ingest_documents_to_chroma(chunks, repo_id)
         print("Repo files stored....")
         summaries = build_summary_index(files,repo_id)
-        ingest_documents_to_chroma(summaries,repo_id)
+        ingest_summaries_to_chroma(summaries,repo_id)
     
         return result,repo_id
  
