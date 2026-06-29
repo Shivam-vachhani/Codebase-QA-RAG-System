@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def get_embedding_model()->OllamaEmbeddings:
+def get_embedding_model()->OpenAIEmbeddings:
     """Initializes and returns the local embedding model using Ollama."""
     # return OllamaEmbeddings(
     #     model="nomic-embed-text",
@@ -18,7 +18,7 @@ def get_embedding_model()->OllamaEmbeddings:
     )
 
 
-def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
+def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->dict:
     """ Saves text chunks into Chroma DB.
     Injects repo_id into metadata to isolate codebase searches later."""
     try:
@@ -52,6 +52,54 @@ def ingest_documents_to_chroma(documents: list[Document],repo_id:str)->bool:
     except Exception as e:
         print(f"Error ingesting documents to Chroma: {e}")
         return {"status": "Failed", "error": str(e)}
+
+def ingest_summaries_to_chroma(summaries:dict,repo_id:str):
+     """Store all summary documents in a dedicated Chroma collection."""
+     embeddings = get_embedding_model()
+     summary_docs = []
+
+     summary_docs.append(Document(
+         page_content=summaries["repo_summary"],
+         metadata={
+            "repo_id": repo_id,
+            "summary_type": "repo",
+            "file_path": "__repo__",
+            "chunk_id": f"{repo_id}_repo_summary"
+         }
+     ))
+
+     for folder_path,summary_text in summaries["folder_summary"].items():
+         summary_docs.append(Document(
+             page_content=summary_text,
+             metadata={
+                "repo_id": repo_id,
+                "summary_type": "folder",
+                "file_path": folder_path,
+                "chunk_id": f"{repo_id}_folder_{folder_path}"
+             }
+         ))
+         
+     for fs in summaries["file_summary"]:
+         summary_docs.append(Document(
+             page_content=fs["summary"],
+             metadata={
+                 "repo_id":repo_id,
+                 "summary_type":"file",
+                 "file_path":fs["file_path"],
+                 "language":fs["language"],
+                 "chunk_id":f"{repo_id}_file_{fs['file_path']}",
+
+             }
+         ))
+     Chroma.from_documents(
+         documents=summary_docs,
+         embedding= embeddings,
+         persist_directory=f"{config.CHROMA_PATH}/{repo_id}",
+         collection_name="summaries",
+     )
+     for print_doc in summary_docs:
+         print(f"docs: {print_doc}\n\n")
+     print(f"[Summaries] Stored {len(summary_docs)} summary documents.")
 
 def load_chroma(repo_id:str,collection:str = "child_chunks"):
     return Chroma(

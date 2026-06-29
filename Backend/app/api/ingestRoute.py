@@ -7,6 +7,8 @@ from app.services.loader_service import get_code_files
 from app.services.chunking_service import chunk_files
 from app.services.vector_service import ingest_documents_to_chroma
 from app.services.rag_service import invalidate_cache
+from app.services.summary_service import build_summary_index
+
 
 router = APIRouter()
 
@@ -24,29 +26,32 @@ def _run_ingest(repo_url: str) -> dict:
         print("Files loaded....")
         chunks = chunk_files(files)
 
-        print("\n" + "="*50 + " INSPECTING PARENT CHUNKS " + "="*50)
-        # Filter out only the parent chunks from the complete list
-        parent_docs = [doc for doc in chunks if doc.metadata.get("chunk_type") == "parent"]
-        for idx, doc in enumerate(parent_docs[100:130]):  # Limits to first 10 so it doesn't flood your console
-            print(f"\n[Parent Chunk #{idx+1}]")
-            print(f"File: {doc.metadata.get('file_path')}")
-            print(f"Node Type: {doc.metadata.get('node_type')}")
-            print(f"Lines: {doc.metadata.get('start_line')} to {doc.metadata.get('end_line')}")
-            print(f"ID: {doc.metadata.get('chunk_id')}")
-            print("-" * 40)
-            # Show the first 3 lines of the actual code chunk
-            code_lines = doc.page_content.splitlines()
-            preview = "\n".join(code_lines[:3])
-            print(preview)
-            if len(code_lines) > 3:
-                print("... (truncated) ...")
+        # print("\n" + "="*50 + " INSPECTING PARENT CHUNKS " + "="*50)
+        # # Filter out only the parent chunks from the complete list
+        # parent_docs = [doc for doc in chunks if doc.metadata.get("chunk_type") == "parent"]
+        # for idx, doc in enumerate(parent_docs[100:130]):  # Limits to first 10 so it doesn't flood your console
+        #     print(f"\n[Parent Chunk #{idx+1}]")
+        #     print(f"File: {doc.metadata.get('file_path')}")
+        #     print(f"Node Type: {doc.metadata.get('node_type')}")
+        #     print(f"Lines: {doc.metadata.get('start_line')} to {doc.metadata.get('end_line')}")
+        #     print(f"ID: {doc.metadata.get('chunk_id')}")
+        #     print("-" * 40)
+        #     # Show the first 3 lines of the actual code chunk
+        #     code_lines = doc.page_content.splitlines()
+        #     preview = "\n".join(code_lines[:3])
+        #     print(preview)
+        #     if len(code_lines) > 3:
+        #         print("... (truncated) ...")
         
-        print(f"\nTotal Parents Extracted: {len(parent_docs)}")
-        print("="*126 + "\n")
+        # print(f"\nTotal Parents Extracted: {len(parent_docs)}")
+        # print("="*126 + "\n")
 
         print("Files chunked....")
         result = ingest_documents_to_chroma(chunks, repo_id)
         print("Repo files stored....")
+        summaries = build_summary_index(files,repo_id)
+        ingest_documents_to_chroma(summaries,repo_id)
+    
         return result,repo_id
  
     finally:
