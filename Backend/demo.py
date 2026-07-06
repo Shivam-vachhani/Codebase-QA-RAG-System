@@ -15,6 +15,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_groq import ChatGroq
 from langchain_core.output_parsers import StrOutputParser
 from cachetools import LRUCache
 from tree_sitter_language_pack import get_language, get_parser  
@@ -24,6 +25,8 @@ import threading
 OLLAMA_HOST = os.getenv("OLLAMA_HOST","http://localhost:11434")
 CHROMA_PATH = os.getenv("CHROMA_PATH","../Database/chroma_db")
 CLONE_TMP = pathlib.Path("../Database/tmp")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+SUMMARY_LLM_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 SUPPORTED ={
     # Backend / Standard languages
@@ -473,8 +476,9 @@ def get_code_files(clone_path:str)->list[dict]:
 
 ##----Function to repo summarization using LLM----##
 def _get_summary_llm():
-    return ChatOpenAI(model=SUMMARY_LLM_MODEL,temperature=0)
-
+    return ChatGroq(model=SUMMARY_LLM_MODEL,
+                    temperature=0,
+                    groq_api_key=GROQ_API_KEY)
 
 def summarize_file(file:dict) -> str:
      """Generate a summary for a single file. Called during ingest."""
@@ -482,25 +486,33 @@ def summarize_file(file:dict) -> str:
 
      content_priview = file["content"][:6000]
 
-     prompt = f""" you are summerizing a source code file for a codebase search index.
-
-    File:{file['path']}
-    Language:{file['language']}
-
-    ```{file['language']}
-    {content_priview}
-    ```
-    Write a concise technical summary(4-8 sentance) covering:
-    -What this file's primary responsibility is 
-    -key classes, funcions or exports its defines
-    -What other parts of the system it depends on it
-    -Any important patterns and design decisions visible here
-
-    Be Specific and technical. No fluff."""
+     prompt = f"""You are summarizing a source code file for a codebase search index. This summary will be embedded and retrieved by semantic search, so every sentence must carry specific, retrievable information.
      
+     File: {file['path']}
+     Language: {file['language']}
+     
+     ```{file['language']}
+     {content_priview}
+     ```
+     
+     Write a concise technical summary (4-6 sentences) covering:
+     - This file's primary responsibility (one sentence, specific to what it actually does)
+     - The key named units it defines — functions, types, classes, constants, exports, or any other top-level construct the language uses, referenced by their real names
+     - What other specific files, modules, or packages it imports or depends on — use real paths/names, not "external libraries" in the abstract
+     - Any genuinely notable detail visible in the code (a specific algorithm, a specific validation rule, a specific data structure, a specific config value) — only if there's a concrete detail to point to
+     
+     Hard rules:
+     - Do NOT use the words "modular," "maintainable," "extensible," "scalable," "robust," or "separation of concerns" unless you can name the specific mechanism that makes it true.
+     - Do NOT end with a generic closing sentence about code quality or design philosophy. End on the last concrete fact.
+     - Do NOT assume or name any particular architecture style (e.g. "microservices," "MVC," "component-based") unless the code itself demonstrates it directly. Describe what the file does in plain terms if no such pattern is clearly visible.
+     - Do NOT use terminology specific to one language/framework (e.g. "hook," "component," "route," "endpoint," "blueprint") unless that exact concept is what the code shows. Use neutral terms like "function," "unit," "data structure," or "entry point" when the file's own language/paradigm doesn't map to those framework-specific terms.
+     - If the file is small/trivial (e.g. a config file, a static data file, a constants file), say so in one sentence and stop — do not pad a simple file with extra sentences to hit a length target.
+     - Every sentence must reference something concrete from the code shown above. If you can't point to a specific name or behavior, cut the sentence.
+     
+     Be specific and technical. No fluff."""
+          
      response = llm.invoke(prompt)
      return response.content
-
 
 def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
      llm = _get_summary_llm()   
@@ -510,22 +522,30 @@ def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
           for s in file_summeries[:20]
      ) 
       
-     prompt = f""" you are summarizing a folder/module in codebase for a search index.
+     prompt = f"""You are summarizing a folder/module in a codebase for a search index. This will be embedded for semantic retrieval, so precision matters more than polish.
+
      Folder: {folder_path}
-     Files in this folder:
+
+     File summaries in this folder:
      {files_overview}
- 
-     Write a concise technical summarie(4-6 sentence) covering:
-     -what this folder/module is responsible for
-     -How its file related to each other
-     -What the rest of the codebase uses this module for 
-     -Any key architecute patterns
- 
-     Be specific and technical """
+
+     Write a concise technical summary (4-6 sentences) covering:
+     - What this folder is responsible for, stated plainly and specifically (not "manages X" — say what X actually consists of, based on the files shown)
+     - How the files in it relate to or depend on each other — name the actual files
+     - What consumes this folder's output (which other folder or part of the system) — only if the evidence supports it; if unclear, say "likely used by" rather than asserting it
+     - One concrete detail if one is visible (a specific data flow, a specific naming convention, a specific shared dependency across files) — skip this point entirely if nothing concrete stands out
+
+     Hard rules:
+     - Do NOT use "modular," "maintainable," "extensible," "scalable," or "separation of concerns" unless naming the specific mechanism.
+     - Do NOT name or assume any particular architecture style ("microservices," "MVC," "layered," "component-based," etc.) unless the file summaries directly demonstrate it. Default to describing the folder's actual contents and relationships in plain terms.
+     - Do NOT use language- or framework-specific terms (e.g. "hooks," "components," "endpoints," "models," "controllers") unless the file summaries themselves use that paradigm. Stick to neutral terms otherwise.
+     - Do NOT end with a generic sentence praising the design. End on the last specific fact.
+     - If the folder only contains config/boilerplate files, say that directly instead of inflating it with architecture language.
+
+     Be specific and technical."""
     
      response = llm.invoke(prompt)
      return response.content
-
 
 def summerize_repo(repo_summary_input:dict) -> str:
      llm = _get_summary_llm()
@@ -537,27 +557,31 @@ def summerize_repo(repo_summary_input:dict) -> str:
 
      file_tree_sample = "\n".join(repo_summary_input["file_tree"][:50])
 
-     prompt=f"""you are genarating a top-level over view of the codebase for devloper assistant.
+     prompt = f"""You are generating a top-level overview of this codebase for a developer assistant. This will be embedded for semantic search, so accuracy about the actual structure matters more than sounding impressive.
 
-     File tree(sample):
+     File tree (sample):
      {file_tree_sample}
 
-     Module Summaries:
+     Module summaries:
      {folder_overview}
 
-     Write through technical overview (8-12 sentances) covering:
-     -What this project does and its primary purpose
-     -The main technology and framewoks used
-     -The high level architecture (frontend/backend/services/etc.)
-     -Key modules and what each is responsible for 
-     -how data flows through the system at high level 
-     -who the likely audiance/user of this system are
+     Write a technical overview (8-10 sentences) covering:
+     - What this project does and its purpose, stated plainly
+     - The actual technologies/languages/frameworks in use, named directly, based only on what's shown in the file tree and module summaries
+     - The actual high-level structure — count and name the real top-level parts (e.g. "two top-level folders: X and Y" or "a single package with three modules"); do not describe it as more distributed, layered, or service-oriented than the evidence supports
+     - Key folders/modules and what each is responsible for, referencing real names from the file tree
+     - How data or control actually flows between the named parts, step by step, based only on what the module summaries state
+     - Who the likely users of this system are, based only on what the project's actual functionality suggests
 
-     Be spicific. Referance actual folde and file names."""
+     Hard rules:
+     - Only describe the structure using an architecture label ("microservices," "event-driven," "layered," "monolith," etc.) if the file tree and module summaries clearly demonstrate it.Otherwise describe the structure in plain, neutral terms (e.g. "one backend and one frontend" or "a single script with helper modules").
+     - Do NOT use terminology tied to one specific language or framework paradigm unless that paradigm is what the evidence shows. Use neutral terms ("program," "module," "service," "entry  point," "data file") when uncertain.
+     - Do NOT close with a generic statement about the project being well-designed, maintainable, or scalable unless a specific fact supports it.
+     - Reference actual folder and file names throughout, not generic descriptions like "the backend module" when a real name is available.
 
+     Be specific."""
      response = llm.invoke(prompt)
      return response.content
-
 
 def build_summary_index(files:list[dict],repo_id:str) -> dict:
     """
@@ -616,8 +640,7 @@ def build_summary_index(files:list[dict],repo_id:str) -> dict:
          "repo_summary":repo_summary_text,
          "folder_summary":folder_summaries,
          "file_summary":file_summaries,
-    }
-
+    }    
 
 ##----Function to split code files into manageable chunks for LLM processing----##
 _thread_local = threading.local()
