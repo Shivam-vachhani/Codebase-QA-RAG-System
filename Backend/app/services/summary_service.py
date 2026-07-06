@@ -1,12 +1,32 @@
 import time,pathlib,os
 from langchain_groq import ChatGroq
+from app.utils.rate_limiter import RateLimiter
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 SUMMARY_LLM_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-GROQ_RPM_LIMIT = 30
-GROQ_RPD_LIMIT = 1000
-_MIN_INTERVAL = 60.0 / GROQ_RPM_LIMIT 
+groq_rate_limiter = RateLimiter(max_requested=25,period=60.0)
+
+def _invoke_with_backoff(llm,prompt,max_retries:int = 5):
+     for attempt in range(max_retries):
+          groq_rate_limiter.acquire()
+          try:
+               return llm.invoke(prompt)
+          except Exception as e:
+               msg = str(e)
+               is_429 = "429" in msg or "rate_limit" in msg.lower()
+
+               if not is_429 or attempt == max_retries-1:
+                    raise
+
+               retry_after = getattr(getattr(e,"response",None),"headers",{}).get("retry-after")
+               wait = float(retry_after) if retry_after else (2**attempt)
+               print(f"[Groq] 429 — retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+               time.sleep(wait)
+          raise RuntimeError("Groq call failed after max retries")
+
+
+
 
 def _get_summary_llm():
     return ChatGroq(model=SUMMARY_LLM_MODEL,
@@ -44,7 +64,7 @@ def summarize_file(file:dict) -> str:
      
      Be specific and technical. No fluff."""
           
-     response = llm.invoke(prompt)
+     response = _invoke_with_backoff(llm,prompt)
      return response.content
 
 def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
@@ -77,7 +97,7 @@ def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
 
      Be specific and technical."""
     
-     response = llm.invoke(prompt)
+     response = _invoke_with_backoff(llm,prompt)
      return response.content
 
 def summerize_repo(repo_summary_input:dict) -> str:
@@ -113,7 +133,7 @@ def summerize_repo(repo_summary_input:dict) -> str:
      - Reference actual folder and file names throughout, not generic descriptions like "the backend module" when a real name is available.
 
      Be specific."""
-     response = llm.invoke(prompt)
+     response = _invoke_with_backoff(llm,prompt)
      return response.content
 
 def build_summary_index(files:list[dict],repo_id:str) -> dict:
