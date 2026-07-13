@@ -13,7 +13,7 @@ def get_reranker():
     if _reranker is None:
         try:
             print(f"[Reranker] Loding model into memory...")
-            _reranker =CrossEncoder("BAAI/bge-reranker-v2-m3",trust_remote_code=True)
+            _reranker =CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2",trust_remote_code=True)
             print(f"[Reranker] Ready.")
         except Exception as e:
             print(f"[Reranker] Failed to load model: {e}. Reranking will be skipped.")

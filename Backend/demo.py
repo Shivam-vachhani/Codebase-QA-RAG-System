@@ -1,7 +1,8 @@
 # main.py — complete codebase Q&A in one file
 
-import os, subprocess, shutil, pathlib,json,re,hashlib,asyncio
+import os, subprocess, shutil, pathlib,json,re,hashlib,asyncio,time
 from uuid import uuid4
+from collections import deque
 from typing import Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -315,7 +316,6 @@ class HybridRetriever():
         return self._fetch_parents(top)    
 
 # __ "Rag pipeline class"__________________________
-
 _rag_cache:LRUCache = LRUCache(maxsize=50) 
 
 def get_rag_service(repo_id:str,model:str)-> "RAGservice" :
@@ -387,6 +387,32 @@ class RAGservice():
         )
             parts.append(f"{header}\n```{doc.metadata['language']}\n{doc.page_content}\n```")
         return '\n\n---\n\n'.join(parts)
+
+# __ "Rate Limiter Class"__________________________________
+class RateLimiter:
+     """Thread-safe sliding-window rate limiter. Blocks the caller until
+     it's safe to make another request, instead of firing and hoping."""
+     def __init__(self,max_requested:int,period:float = 60.0):
+          self.max_requested = max_requested
+          self.period= period
+          self.timestamps = deque()
+          self.lock = threading.Lock()
+
+     def acquire(self):
+          while True:
+               with self.lock:
+                    now = time.monotonic()
+                    while self.timestamps and now - self.timestamps[0] > self.period:
+                         self.timestamps.popleft()
+                    
+                    if len(self.timestamps) < self.max_requested:
+                         self.timestamps.append(now)
+                         return
+                    
+                    sleep_time = self.period - (now-self.timestamps[0]) + 0.1
+
+                    print(f"[RateLimiter] {self.max_requested}/{self.period}s reached — sleeping {sleep_time:.2f}s")
+                    time.sleep(sleep_time)
 
 # ──  "services" ───────────────────────────
 def clone_repo(repo_url:str)->tuple[str,str]:
@@ -480,6 +506,27 @@ def _get_summary_llm():
                     temperature=0,
                     groq_api_key=GROQ_API_KEY)
 
+groq_rate_limiter = RateLimiter(max_requested=25,period=60.0)
+
+def _invoke_with_backoff(llm,prompt,max_retries:int = 5):
+     for attempt in range(max_retries):
+          groq_rate_limiter.acquire()
+          try:
+               return llm.invoke(prompt)
+          except Exception as e:
+               msg = str(e)
+               is_429 = "429" in msg or "rate_limit" in msg.lower()
+
+               if not is_429 or attempt == max_retries-1:
+                    raise
+
+               retry_after = getattr(getattr(e,"response",None),"headers",{}).get("retry-after")
+               wait = float(retry_after) if retry_after else (2**attempt)
+               print(f"[Groq] 429 — retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+               time.sleep(wait)
+          raise RuntimeError("Groq call failed after max retries")
+
+
 def summarize_file(file:dict) -> str:
      """Generate a summary for a single file. Called during ingest."""
      llm = _get_summary_llm()
@@ -511,7 +558,7 @@ def summarize_file(file:dict) -> str:
      
      Be specific and technical. No fluff."""
           
-     response = llm.invoke(prompt)
+     response = _invoke_with_backoff(llm,prompt)
      return response.content
 
 def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
@@ -544,7 +591,7 @@ def summerize_folder(folder_path:str,file_summeries:list[dict]) -> str :
 
      Be specific and technical."""
     
-     response = llm.invoke(prompt)
+     response = _invoke_with_backoff(llm,prompt)
      return response.content
 
 def summerize_repo(repo_summary_input:dict) -> str:
@@ -580,7 +627,7 @@ def summerize_repo(repo_summary_input:dict) -> str:
      - Reference actual folder and file names throughout, not generic descriptions like "the backend module" when a real name is available.
 
      Be specific."""
-     response = llm.invoke(prompt)
+     response = _invoke_with_backoff(llm,prompt)
      return response.content
 
 def build_summary_index(files:list[dict],repo_id:str) -> dict:
