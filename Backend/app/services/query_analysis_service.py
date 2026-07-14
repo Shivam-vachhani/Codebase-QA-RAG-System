@@ -59,7 +59,7 @@ def _invoke_with_backoff(chain,payload,max_retries:int=3):
    for attempt in range(max_retries):
       analysis_rate_limiter.acquire()
       try:
-         chain.invoke(payload)
+         return chain.invoke(payload)
       except Exception as e:
          msg= str(e)
          is_429 = "429" in msg or "rate_limit" in msg.lower()

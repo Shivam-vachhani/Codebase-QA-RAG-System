@@ -32,14 +32,14 @@ def invalidate_cache(repo_id:str):
 class RAGservice():
 
     def __init__(self,repo_id:str,model:str):
-        self.repo_id = repo_id,
+        self.repo_id = repo_id
         self.model = model
 
         child_vectorestore = load_chroma(repo_id,collection="child_chunks")
         parent_vectorestore = load_chroma(repo_id,collection="parent_chunks")
         
         child_chunks= get_all_docs(child_vectorestore)
-        self.retriever = HybridRetriever(child_chunks,child_vectorestore,parent_vectorestore)
+        self.retriever = HybridRetriever(child_chunks,child_vectorestore,parent_vectorestore,max_workers=4)
         self.chain = build_rag_chain(model)
 
     def run(self,question:str)->dict:
@@ -113,7 +113,7 @@ class RAGservice():
                 for path,summary in included_summaries.items()
             )
             parts.append(f"High-level context:\n{summary_block}")
-
+        
         for doc in docs:
             header = (
             f"File: {doc.metadata['file_path']} "
@@ -121,4 +121,5 @@ class RAGservice():
             f"| Language: {doc.metadata['language']}"
         )
             parts.append(f"{header}\n```{doc.metadata['language']}\n{doc.page_content}\n```")
+        
         return '\n\n---\n\n'.join(parts)

@@ -124,18 +124,14 @@ def get_file_summaries_by_path(repo_id:str,file_paths:list[str])->dict[str,str]:
     try:
         summary_store = load_chroma(repo_id, collection="summaries")
         results = summary_store.get(
-            where={
-              "$end":[
-                  {"summary_type": {"$eq": "file"}},
-                  {"file_path":{"$in":file_paths}}
-              ]  
-            },
+            where={"file_path":{"$in":file_paths}},
             include=["documents","metadatas"]
         )
     
         return {
             meta["file_path"]:doc
             for doc,meta in zip(results["documents"],results["metadatas"])
+            if meta.get("summary_type") == "file"
         }
     except Exception as e:
         print(f"[VectorService] File summary lookup failed: {e}")

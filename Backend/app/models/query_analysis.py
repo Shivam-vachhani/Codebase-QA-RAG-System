@@ -4,7 +4,7 @@ from typing import Literal
 class QeryAnalysis(BaseModel):
     classification: Literal["CONCEPTUAL","CODE_SPECIFIC"] = Field(
         description=(
-            "CONCEPTUAL for 'how/why does X work' style questions.",
+            "CONCEPTUAL for 'how/why does X work' style questions."
             "CODE_SPECIFIC for 'where is X defined/called/implemented' style questions."
         )              
     )
@@ -15,7 +15,7 @@ class QeryAnalysis(BaseModel):
         min_length=1,
         max_length=3,
         description=(
-            "2-3 alternative search queries using real function/class/file",
+            "2-3 alternative search queries using real function/class/file"
             "names or technical synonyms visible in the provided context"
         )
     )
