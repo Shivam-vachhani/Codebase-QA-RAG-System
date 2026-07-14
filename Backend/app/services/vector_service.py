@@ -97,8 +97,8 @@ def ingest_summaries_to_chroma(summaries:dict,repo_id:str):
          persist_directory=f"{config.CHROMA_PATH}/{repo_id}",
          collection_name="summaries",
      )
-     for print_doc in summary_docs:
-         print(f"docs: {print_doc}\n\n")
+    #  for print_doc in summary_docs:
+    #      print(f"docs: {print_doc}\n\n")
      print(f"[Summaries] Stored {len(summary_docs)} summary documents.")
 
 def load_chroma(repo_id:str,collection:str = "child_chunks"):

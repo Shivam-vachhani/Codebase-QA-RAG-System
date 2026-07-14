@@ -25,9 +25,6 @@ def _invoke_with_backoff(llm,prompt,max_retries:int = 5):
                time.sleep(wait)
           raise RuntimeError("Groq call failed after max retries")
 
-
-
-
 def _get_summary_llm():
     return ChatGroq(model=SUMMARY_LLM_MODEL,
                     temperature=0,

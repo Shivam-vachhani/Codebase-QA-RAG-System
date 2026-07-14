@@ -1,6 +1,7 @@
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document 
+from concurrent.futures import ThreadPoolExecutor
 import re
 import hashlib
 
@@ -23,18 +24,29 @@ def get_reranker():
     
     return _reranker
 
+SYMBOL_PATTERN = re.compile(r'where.*?[`"\']?(\w+)[`"\']?\s*(is\s*)?(called|used|imported|referenced)', re.IGNORECASE)
+
+def detect_symbol_serach(question:str)->str | None:
+    """Detects if the question is a symbol lookup (e.g., "where is foo called?") and extracts the symbol name."""
+    match = SYMBOL_PATTERN.search(question)
+    if match:
+        return match.group(1)
+    return None
+
 class HybridRetriever():
-    def __init__(self,child_chunks:list[Document],child_vectorestore,parent_vectorestore):
+    def __init__(self,child_chunks:list[Document],child_vectorestore,parent_vectorestore,max_workers:int = 4):
         """ Called ONCE when sever starts.
         Builds the BM25 index and loads the code-optimized reranker model.
         """
         self.child_chunks = child_chunks
         self.child_vectorstore = child_vectorestore
         self.parent_vectorstore= parent_vectorestore
+        self.max_workers = max_workers
 
         tokenized = [self._tokenized_code(doc.page_content) for doc in child_chunks]
         self.bm25 = BM25Okapi(tokenized)
         self.re_ranker = get_reranker()
+
 
     def _tokenized_code(self,text:str)->list[str]:
         """Advanced multi-language code tokenizer for BM25.
@@ -60,38 +72,65 @@ class HybridRetriever():
         
         return final_tokens
     
-    def retrieve(self,query:str,final_k:int=5)->list[Document]:
-        """
-        Called on EVERY user query.
-        Runs BM25 + Vector in parallel, merges via RRF, reranks, returns best child_chunks.
-        """
-        
-        ref_match = re.search(
-            r'where.*?[`"\']?(\w+)[`"\']?\s*(is\s*)?(called|used|imported|referenced)',
-        query, re.IGNORECASE
-         )
-    
-        if ref_match:
-            symbol = ref_match.group(1)
-            print(f"[Retriever] Symbol lookup detected: {symbol}")
-            return self._symbol_search(symbol, final_k)
-        
+
+    def _search_single_query(self,query:str)->tuple[list[Document],list[Document]]:
+        """Helper for parallel search — returns BM25 and vector results for a single query."""
         tokenized_query = self._tokenized_code(query)
         bm25_scores = self.bm25.get_scores(tokenized_query)
-        top10_index = sorted(range(len(bm25_scores)),
-                             key= lambda i:bm25_scores[i],
-                             reverse=True)[:30]
-        bm25_docs = [self.child_chunks[i] for i  in top10_index ]
+        top_index = sorted(range(len(bm25_scores)),key= lambda i : bm25_scores[i], reverse=True)[:30]
+        bm25_docs = [self.child_chunks[i] for i in top_index]
 
         vector_docs = self.child_vectorstore.similarity_search(query,k=30)
 
-        merged_children = self._rrf_merge(bm25_docs,vector_docs,top_n=20)
+        return bm25_docs,vector_docs
+
+
+    def retrieve(
+            self,
+            original_query:str, 
+            expanded_queries:list[str], 
+            classification:str = "CODE_SPECIFIC", 
+            final_k:int=5
+    )->list[Document]:
+        """
+        Called on EVERY user query.
+        Runs BM25 + Vector for ALL query
+        variants IN PARALLEL via ThreadPoolExecutor, RRF-merges everything
+        (weighted by classification), reranks against the ORIGINAL query,
+        returns parent chunks.
+        """
+
+        symbol = detect_symbol_serach(original_query)
+        if symbol:
+            print(f"[Retriever] Symbol lookup detected: {symbol}")
+            return self._symbol_search(symbol, final_k)
+        
+        all_queries = list(dict.fromkeys([original_query]+expanded_queries))
+
+        bm25_lists = []
+        vector_lists = []
+
+        with ThreadPoolExecutor(max_workers=min(self.max_workers,len(all_queries))) as executor:
+            future_to_query = {
+                executor.submit(self._search_single_query,q): q
+                for q in all_queries 
+            }
+            for future in future_to_query:
+                try:
+                    bm25_docs,vector_docs = future.result()
+                    bm25_lists.append(bm25_docs)
+                    vector_lists.append(vector_docs)
+                except Exception as e:
+                    q = future_to_query[future]
+                    print(f"[Retriever] Search failed for query {q!r}: {e}")
+                    
+        merged_children = self._rrf_merge(bm25_lists,vector_lists,classification,top_n=20)
 
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
-            return merged_children[:final_k]
+            return self._fetch_parents(merged_children[:final_k])
 
-        pairs = [[query,doc.page_content] for doc in merged_children]
+        pairs = [[original_query,doc.page_content] for doc in merged_children]
         scores = self.re_ranker.predict(pairs)
         ranked = sorted(zip(merged_children,scores),key=lambda x:x[1],reverse=True)
 
@@ -143,38 +182,51 @@ class HybridRetriever():
     
 
     def _rrf_merge(self,
-                   bm25_docs:list[Document],
-                   vector_docs:list[Document],
+                   bm25_lists:list[list[Document]],
+                   vector_lists:list[list[Document]],
+                   classification:str,
                    k:int = 60,
                    top_n:int = 10)-> list[Document]:
-        """ Reciprocal Rank Fusion — merges two ranked lists. """
+        """ Reciprocal Rank Fusion — merges two ranked nasted lists. accept N lists per source
+        Classification adjusts relative BM25 vs vector weight instead of
+        gating either source out entirely."""
+        
+        if classification == "CODE_SPECIFIC":
+            bm25_weight , vector_weight = 1.2, 0.8,
+        else:
+            bm25_weight , vector_weight = 0.8, 1.2
 
         scores : dict[str,float] = {}
         doc_map : dict[str,Document] = {}
+       
+        def _procces(doc_lists,sorce_weight):
+            for doc_list in doc_lists:
+                for rank,doc in enumerate(doc_list):
+                    if hasattr(doc,"id") and doc.id:
+                        key = str(doc.id)
+                    elif "chunk_id" in doc.metadata:
+                        key = str(doc.metadata["chunk_id"])
+                    else:
+                        key = hashlib.md5(doc.page_content.encode('utf-8')).hexdigest()
 
-        for doc_list in [bm25_docs,vector_docs]:
-            for rank,doc in enumerate(doc_list):
-                if hasattr(doc,"id") and doc.id:
-                    key = str(doc.id)
-                elif "chunk_id" in doc.metadata:
-                    key = str(doc.metadata["chunk_id"])
-                else:
-                    key = hashlib.md5(doc.page_content.encode('utf-8')).hexdigest()
-                
-                base_score = 1.0 / (rank + k)
+                    base_score = (1.0 / (rank + k)) * sorce_weight
 
-                file_path = str(doc.metadata.get("file_path", "")).lower()
-                language = str(doc.metadata.get("language", "")).lower()
-                content_len = len(doc.page_content)
+                    file_path = str(doc.metadata.get("file_path", "")).lower()
+                    language = str(doc.metadata.get("language", "")).lower()
+                    content_len = len(doc.page_content)
 
-                if file_path.endswith(".md") or language == "markdown" or "readme" in file_path:
-                    base_score *= 0.40
-                if content_len > 1500:
-                    base_score *= 0.60
-                scores[key] = scores.get(key,0.0) + base_score
+                    if file_path.endswith(".md") or language == "markdown" or "readme" in file_path:
+                        base_score *= 0.40
+                    if content_len > 1500:
+                        base_score *= 0.60
 
-                if key not in doc_map or len(doc.metadata) > len(doc_map[key].metadata):
-                    doc_map[key] = doc
+                    scores[key] = scores.get(key,0.0) + base_score
+
+                    if key not in doc_map or len(doc.metadata) > len(doc_map[key].metadata):
+                        doc_map[key] = doc
+                        
+        _procces(bm25_lists,bm25_weight)
+        _procces(vector_lists,vector_weight)
 
         sorted_keys = sorted(scores,key = lambda x:scores[x],reverse=True)
         return [doc_map[key] for key in sorted_keys[:top_n]]
