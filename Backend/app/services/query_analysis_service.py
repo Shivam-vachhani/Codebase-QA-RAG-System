@@ -35,9 +35,9 @@ def _get_summary_context(repo_id:str, question:str, k:int = 5) -> str:
     """cheap grounding lookup against summries that build at ingest."""
 
     try:
-      summary_strore = load_chroma(repo_id,collection="summaries")
-      doc_results=summary_strore.similarity_search(question,k=k)
-
+      summary_store = load_chroma(repo_id,collection="summaries")
+      doc_results=summary_store.similarity_search(question,k=k)
+      print(f"[QueryAnalysis] Found {len(doc_results)} summary docs for context lookup.")
       return "/n/n".join(
            f"[{d.metadata.get("summary_type")}] {d.metadata.get('file_path')}:{d.page_content}"
            for d in doc_results
@@ -76,7 +76,7 @@ def _fallback(question:str) -> QeryAnalysis:
    return QeryAnalysis(
       classification="CODE_SPECIFIC",
       confidence=0.0,
-      expanded_querys=[question]
+      expanded_queries=[question]
    )
 
 def analyze_query(repo_id:str, question:str) ->QeryAnalysis:

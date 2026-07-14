@@ -137,8 +137,8 @@ class HybridRetriever():
         top_children = [doc for doc, _ in ranked[:final_k] ]
 
         parent_docs = self._fetch_parents(top_children)
-        for doc in parent_docs:
-            print(doc.page_content)
+        # for doc in parent_docs:
+        #     print(doc.page_content)
         return parent_docs
             
 
@@ -224,7 +224,7 @@ class HybridRetriever():
 
                     if key not in doc_map or len(doc.metadata) > len(doc_map[key].metadata):
                         doc_map[key] = doc
-                        
+
         _procces(bm25_lists,bm25_weight)
         _procces(vector_lists,vector_weight)
 

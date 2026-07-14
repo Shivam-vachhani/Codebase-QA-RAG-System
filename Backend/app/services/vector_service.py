@@ -115,5 +115,30 @@ def get_all_docs(vectorstore) ->list[Document]:
         chunks.append(Document(page_content=text,metadata=metadata))
     return chunks
 
+
+def get_file_summaries_by_path(repo_id:str,file_paths:list[str])->dict[str,str]:
+    """Fetches summaries for the given file paths from the Chroma summary collection."""
+   
+    if not file_paths:
+        return {}
+    try:
+        summary_store = load_chroma(repo_id, collection="summaries")
+        results = summary_store.get(
+            where={
+              "$end":[
+                  {"summary_type": {"$eq": "file"}},
+                  {"file_path":{"$in":file_paths}}
+              ]  
+            },
+            include=["documents","metadatas"]
+        )
+    
+        return {
+            meta["file_path"]:doc
+            for doc,meta in zip(results["documents"],results["metadatas"])
+        }
+    except Exception as e:
+        print(f"[VectorService] File summary lookup failed: {e}")
+        return {}
      
 
