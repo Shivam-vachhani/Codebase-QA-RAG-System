@@ -133,13 +133,12 @@ class HybridRetriever():
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
             return self._fetch_parents(merged_children[:final_k])
-
+        
         pairs = [[original_query,doc.page_content] for doc in merged_children]
         scores = self.re_ranker.predict(pairs)
         ranked = sorted(zip(merged_children,scores),key=lambda x:x[1],reverse=True)
 
         top_children = [doc for doc, _ in ranked[:final_k] ]
-       
         parent_docs = self._fetch_parents(top_children)
         # for doc in parent_docs:
         #     print(doc.page_content)
@@ -152,22 +151,27 @@ class HybridRetriever():
         Deduplicates — multiple children from the same function return one parent.
         """
         seen_parent_ids = set()
+        seen_summary_paths = set()
         file_counts={}
         parents=[]
 
         for child in child_docs:
             parent_id = child.metadata.get("parent_id")
             file_path = child.metadata.get("file_path", "")
-            type = child.metadata.get("chunk_type", "")
-
+            chunk_type = child.metadata.get("chunk_type", "")
+            
+            if chunk_type == "file_summary" or chunk_type == "folder_summary" or chunk_type == "repo_summary":
+                if file_path in seen_summary_paths:
+                    continue
+                seen_summary_paths.add(file_path)
+                parents.append(child)
+                continue
+        
             if not parent_id or parent_id in seen_parent_ids:
                 continue
             
             if file_counts.get(file_path,0)>=2:
                 continue
-            
-            if type == "summary":
-                parents.append(child)
 
             seen_parent_ids.add(parent_id)
             file_counts[file_path] = file_counts.get(file_path, 0) + 1
@@ -196,7 +200,7 @@ class HybridRetriever():
                    classification:str,
                    k:int = 60,
                    top_n:int = 10)-> list[Document]:
-        """ Reciprocal Rank Fusion — merges two ranked nasted lists. accept N lists per source
+        """ Reciprocal Rank Fusion — merges three ranked nasted lists. accept N lists per source
         Classification adjusts relative BM25 vs vector weight instead of
         gating either source out entirely."""
         
@@ -224,7 +228,8 @@ class HybridRetriever():
                     language = str(doc.metadata.get("language", "")).lower()
                     content_len = len(doc.page_content)
 
-                    if file_path.endswith(".md") or language == "markdown" or "readme" in file_path or doc.metadata.get("chunk_type") != "summary":
+                    is_markdown = file_path.endswith(".md") or language == "markdown" or "readme" in file_path
+                    if is_markdown and doc.metadata.get("chunk_type") != "summary":
                         base_score *= 0.40
                     if content_len > 1500:
                         base_score *= 0.60

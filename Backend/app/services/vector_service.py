@@ -62,7 +62,7 @@ def ingest_summaries_to_chroma(summaries:dict,repo_id:str):
          page_content=summaries["repo_summary"],
          metadata={
             "repo_id": repo_id,
-            "summary_type": "repo",
+            "chunk_type": "repo_summary",
             "file_path": "__repo__",
             "chunk_id": f"{repo_id}_repo_summary"
          }
@@ -73,7 +73,7 @@ def ingest_summaries_to_chroma(summaries:dict,repo_id:str):
              page_content=summary_text,
              metadata={
                 "repo_id": repo_id,
-                "summary_type": "folder",
+                "chunk_type": "folder_summary",
                 "file_path": folder_path,
                 "chunk_id": f"{repo_id}_folder_{folder_path}"
              }
@@ -84,7 +84,7 @@ def ingest_summaries_to_chroma(summaries:dict,repo_id:str):
              page_content=fs["summary"],
              metadata={
                  "repo_id":repo_id,
-                 "summary_type":"file",
+                 "chunk_type":"file_summary",
                  "file_path":fs["file_path"],
                  "language":fs["language"],
                  "chunk_id":f"{repo_id}_file_{fs['file_path']}",
@@ -131,7 +131,7 @@ def get_file_summaries_by_path(repo_id:str,file_paths:list[str])->dict[str,str]:
         return {
             meta["file_path"]:doc
             for doc,meta in zip(results["documents"],results["metadatas"])
-            if meta.get("summary_type") == "file"
+            if meta.get("chunk_type") == "file_summary"
         }
     except Exception as e:
         print(f"[VectorService] File summary lookup failed: {e}")

@@ -90,8 +90,8 @@ class RAGservice():
             "sources":[
                 {
                     "file":d.metadata['file_path'],
-                    "line":d.metadata['start_line'],
-                    "language":d.metadata['language']
+                    "chunk_type":d.metadata["chunk_type"],
+                    "language":d.metadata.get("language","plain text"),
                 }
                 for d in docs
             ],
@@ -105,7 +105,7 @@ class RAGservice():
 
         included_summaries = {
             path:summary for path,summary in file_summaries.items() 
-            if path in {d.metadata.get("file_path") for d in docs}
+            if path in {d.metadata.get("file_path") for d in docs} 
         }
 
         if included_summaries:
@@ -116,11 +116,20 @@ class RAGservice():
             parts.append(f"High-level context:\n{summary_block}")
         
         for doc in docs:
-            header = (
-            f"File: {doc.metadata['file_path']} "
-            f"| Line: {doc.metadata['start_line']} "
-            f"| Language: {doc.metadata['language']}"
-        )
-            parts.append(f"{header}\n```{doc.metadata['language']}\n{doc.page_content}\n```")
+            if doc.metadata.get("chunk_type") in ["file_summary", "folder_summary", "repo_summary"]:
+                header = (
+                    f"File: {doc.metadata['file_path']} "
+                    f"| Chunk type: {doc.metadata.get('chunk_type', 'summary')}"
+                )
+            else:
+                header = (
+                f"File: {doc.metadata['file_path']} "
+                f"| Line: {doc.metadata['start_line']} "
+                f"| Language: {doc.metadata['language']} "
+                f"| Chunk type: {doc.metadata.get('chunk_type', 'code')}"
+                )
+
+            parts.append(f"{header}\n```{(doc.metadata.get('language') or '')}\n{doc.page_content}\n```")
+
         
         return '\n\n---\n\n'.join(parts)

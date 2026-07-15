@@ -39,7 +39,7 @@ def _get_summary_context(repo_id:str, question:str, k:int = 5) -> str:
       doc_results=summary_store.similarity_search(question,k=k)
       print(f"[QueryAnalysis] Found {len(doc_results)} summary docs for context lookup.")
       return "/n/n".join(
-           f"[{d.metadata.get("summary_type")}] {d.metadata.get('file_path')}:{d.page_content}"
+           f"[{d.metadata.get("chunk_type")}] {d.metadata.get('file_path')}:{d.page_content}"
            for d in doc_results
       )
     except Exception as e:
