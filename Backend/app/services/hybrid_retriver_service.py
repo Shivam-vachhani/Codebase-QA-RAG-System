@@ -34,13 +34,14 @@ def detect_symbol_serach(question:str)->str | None:
     return None
 
 class HybridRetriever():
-    def __init__(self,child_chunks:list[Document],child_vectorestore,parent_vectorestore,max_workers:int = 4):
+    def __init__(self,child_chunks:list[Document],child_vectorestore,parent_vectorestore,summary_vectorestore,max_workers:int = 4):
         """ Called ONCE when sever starts.
         Builds the BM25 index and loads the code-optimized reranker model.
         """
         self.child_chunks = child_chunks
         self.child_vectorstore = child_vectorestore
         self.parent_vectorstore= parent_vectorestore
+        self.summary_vectorstore = summary_vectorestore
         self.max_workers = max_workers
 
         tokenized = [self._tokenized_code(doc.page_content) for doc in child_chunks]
@@ -81,8 +82,8 @@ class HybridRetriever():
         bm25_docs = [self.child_chunks[i] for i in top_index]
 
         vector_docs = self.child_vectorstore.similarity_search(query,k=30)
-
-        return bm25_docs,vector_docs
+        summary_docs = self.summary_vectorstore.similarity_search(query,k=6)
+        return bm25_docs,vector_docs,summary_docs
 
 
     def retrieve(
@@ -109,6 +110,7 @@ class HybridRetriever():
 
         bm25_lists = []
         vector_lists = []
+        summary_lists = []
 
         with ThreadPoolExecutor(max_workers=min(self.max_workers,len(all_queries))) as executor:
             future_to_query = {
@@ -117,14 +119,16 @@ class HybridRetriever():
             }
             for future in future_to_query:
                 try:
-                    bm25_docs,vector_docs = future.result()
+                    bm25_docs,vector_docs,summary_docs = future.result()
                     bm25_lists.append(bm25_docs)
                     vector_lists.append(vector_docs)
+                    summary_lists.append(summary_docs)
+
                 except Exception as e:
                     q = future_to_query[future]
                     print(f"[Retriever] Search failed for query {q!r}: {e}")
                     
-        merged_children = self._rrf_merge(bm25_lists,vector_lists,classification,top_n=20)
+        merged_children = self._rrf_merge(bm25_lists,vector_lists,summary_lists,classification,top_n=20)
 
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
@@ -135,7 +139,7 @@ class HybridRetriever():
         ranked = sorted(zip(merged_children,scores),key=lambda x:x[1],reverse=True)
 
         top_children = [doc for doc, _ in ranked[:final_k] ]
-
+       
         parent_docs = self._fetch_parents(top_children)
         # for doc in parent_docs:
         #     print(doc.page_content)
@@ -154,6 +158,7 @@ class HybridRetriever():
         for child in child_docs:
             parent_id = child.metadata.get("parent_id")
             file_path = child.metadata.get("file_path", "")
+            type = child.metadata.get("chunk_type", "")
 
             if not parent_id or parent_id in seen_parent_ids:
                 continue
@@ -161,6 +166,9 @@ class HybridRetriever():
             if file_counts.get(file_path,0)>=2:
                 continue
             
+            if type == "summary":
+                parents.append(child)
+
             seen_parent_ids.add(parent_id)
             file_counts[file_path] = file_counts.get(file_path, 0) + 1
 
@@ -184,6 +192,7 @@ class HybridRetriever():
     def _rrf_merge(self,
                    bm25_lists:list[list[Document]],
                    vector_lists:list[list[Document]],
+                   summary_lists:list[list[Document]],
                    classification:str,
                    k:int = 60,
                    top_n:int = 10)-> list[Document]:
@@ -192,9 +201,9 @@ class HybridRetriever():
         gating either source out entirely."""
         
         if classification == "CODE_SPECIFIC":
-            bm25_weight , vector_weight = 1.2, 0.8,
+            bm25_weight , vector_weight , summary_weight = 1.5, 1.1 , 0.4 
         else:
-            bm25_weight , vector_weight = 0.8, 1.2
+            bm25_weight , vector_weight , summary_weight = 0.9, 0.7 , 1.5 
 
         scores : dict[str,float] = {}
         doc_map : dict[str,Document] = {}
@@ -215,7 +224,7 @@ class HybridRetriever():
                     language = str(doc.metadata.get("language", "")).lower()
                     content_len = len(doc.page_content)
 
-                    if file_path.endswith(".md") or language == "markdown" or "readme" in file_path:
+                    if file_path.endswith(".md") or language == "markdown" or "readme" in file_path or doc.metadata.get("chunk_type") != "summary":
                         base_score *= 0.40
                     if content_len > 1500:
                         base_score *= 0.60
@@ -227,6 +236,7 @@ class HybridRetriever():
 
         _procces(bm25_lists,bm25_weight)
         _procces(vector_lists,vector_weight)
+        _procces(summary_lists,summary_weight)
 
         sorted_keys = sorted(scores,key = lambda x:scores[x],reverse=True)
         return [doc_map[key] for key in sorted_keys[:top_n]]

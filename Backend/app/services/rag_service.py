@@ -37,9 +37,10 @@ class RAGservice():
 
         child_vectorestore = load_chroma(repo_id,collection="child_chunks")
         parent_vectorestore = load_chroma(repo_id,collection="parent_chunks")
-        
+        summary_vectorestore = load_chroma(repo_id,collection="summaries")
+
         child_chunks= get_all_docs(child_vectorestore)
-        self.retriever = HybridRetriever(child_chunks,child_vectorestore,parent_vectorestore,max_workers=4)
+        self.retriever = HybridRetriever(child_chunks,child_vectorestore,parent_vectorestore,summary_vectorestore,max_workers=4)
         self.chain = build_rag_chain(model)
 
     def run(self,question:str)->dict:
