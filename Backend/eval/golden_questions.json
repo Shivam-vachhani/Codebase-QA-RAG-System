@@ -1,0 +1,123 @@
+[
+  {
+    "repo_id": "5778a3b0",
+    "question": "Where is the new access token signed and set as a cookie after a refresh token is validated?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "Why does the app use Socket.IO in development but switch to Pusher in production for real-time events?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "Where is the getSocket function defined?",
+    "expected_classification": "SYMBOL_LOOKUP"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "Why is the friendship record created with user1Id and user2Id sorted by comparison instead of just using senderId and reciverId directly?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "Where is the seenBy field on a Message updated when a user reads a conversation?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "How does the axios interceptor in lib/axios.ts handle a 401 response and avoid sending multiple simultaneous refresh requests?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "Where is pusher.trigger called when a new chat message is sent?",
+    "expected_classification": "SYMBOL_LOOKUP"
+  },
+  {
+    "repo_id": "5778a3b0",
+    "question": "Why does the login flow store both an access token and a refresh token instead of just one long-lived token?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Where is the relative_floor value computed before being passed into the XGBoost model?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Why was XGBoost chosen over Random Forest even though Random Forest has a slightly higher test R²?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Where is the area_encoded value looked up from area_mapping_.json?",
+    "expected_classification": "SYMBOL_LOOKUP"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Why does the backend fall back to global_mean when an area isn't found in the mapping dictionary?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Where is the minimum required square footage for each BHK configuration validated on the prediction form?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "How does the CompareModels page determine which model is the 'winner' among Linear Regression, Random Forest, and XGBoost?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Where is the fetch call made to the /predict endpoint in the frontend?",
+    "expected_classification": "SYMBOL_LOOKUP"
+  },
+  {
+    "repo_id": "7258a244",
+    "question": "Why is the predicted price multiplied by 100000 when displaying it in the ResultPanel component?",
+    "expected_classification": "CONCEPTUAL"
+  },
+   {
+    "repo_id": "3",
+    "question": "Where is the Navbar component imported and rendered inside App.jsx?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "3",
+    "question": "Why does main.jsx wrap the App component in React.StrictMode during development?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "3",
+    "question": "Where is the logo image source referenced from the assets module inside Navbar.jsx?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "3",
+    "question": "Why is the React plugin from @vitejs/plugin-react registered in vite.config.js instead of using plain esbuild JSX transforms?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "3",
+    "question": "Where is the box-sizing and margin/padding reset applied globally in the project's CSS?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "3",
+    "question": "Why does eslint.config.js disable the react/jsx-no-target-blank rule and configure react-refresh/only-export-components with allowConstantExport?",
+    "expected_classification": "CONCEPTUAL"
+  },
+  {
+    "repo_id": "3",
+    "question": "Where is the root DOM element that React mounts the app into defined?",
+    "expected_classification": "CODE_SPECIFIC"
+  },
+  {
+    "repo_id": "3",
+    "question": "Why does the project include react-router-dom as a dependency even though no routes are currently defined in App.jsx?",
+    "expected_classification": "CONCEPTUAL"
+  }
+]
+

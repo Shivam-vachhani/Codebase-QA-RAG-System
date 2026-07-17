@@ -47,7 +47,7 @@ class RAGservice():
         }
 
 
-    def run(self,question:str)->dict:
+    def run(self,question:str,include_context:bool = False)->dict:
         t0 = time.time()
 
         symbol = detect_symbol_serach(question)
@@ -93,7 +93,7 @@ class RAGservice():
         print(f"[TIMER] LLM generation: {t4-t3:.2f}s")
         print(f"[TIMER] Total: {t4-t0:.2f}s")
 
-        return {
+        response_dict = {
             "answer":awnser,
             "sources":[
                 {
@@ -103,8 +103,14 @@ class RAGservice():
                 }
                 for d in docs
             ],
-            "summaries":{ path:summary for path, summary in file_summaries.items() }
+            "summaries": { path:summary for path, summary in file_summaries.items() } 
         }
+
+        if include_context:
+            response_dict["context"] = [d.page_content for d in docs]
+            
+        return response_dict
+
 
     def _fomrat_context(self,docs:list[Document],file_summaries:dict[str,str])->str:
         """'High-level context' block from file summaries,
