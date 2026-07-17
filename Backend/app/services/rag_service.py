@@ -41,7 +41,11 @@ class RAGservice():
 
         child_chunks= get_all_docs(child_vectorestore)
         self.retriever = HybridRetriever(child_chunks,child_vectorestore,parent_vectorestore,summary_vectorestore,max_workers=4)
-        self.chain = build_rag_chain(model)
+        self.chains = {
+            "CONCEPTUAL":build_rag_chain(model,"CONCEPTUAL"),
+            "CODE_SPECIFIC":build_rag_chain(model,"CODE_SPECIFIC"),
+        }
+
 
     def run(self,question:str)->dict:
         t0 = time.time()
@@ -60,7 +64,9 @@ class RAGservice():
                 original_query=question,
                 expanded_queries=analysis.expanded_queries,
                 classification=analysis.classification,
-                final_k=5
+                confidence=analysis.confidence,
+                final_k=5,
+                min_code_slots=1
             )
             classification = analysis.classification
             
@@ -73,10 +79,12 @@ class RAGservice():
         print(f"[TIMER] File summary enrichment: {t2 - t1:.2f}s")
         
         context = self._fomrat_context(docs,file_summaries)
+        chain_key = "CONCEPTUAL" if classification == "CONCEPTUAL" else "CODE_SPECIFIC"
+        chain = self.chains[chain_key]
 
         print("Chain is started running.....")
         t3 = time.time()
-        awnser = self.chain.invoke({
+        awnser = chain.invoke({
             "context":context,
             "question":question
         })

@@ -90,15 +90,18 @@ class HybridRetriever():
             self,
             original_query:str, 
             expanded_queries:list[str], 
-            classification:str = "CODE_SPECIFIC", 
-            final_k:int=5
+            classification:str = "CODE_SPECIFIC",
+            confidence:float = 1.0, 
+            final_k:int=5,
+            min_code_slots:int=1
     )->list[Document]:
         """
         Called on EVERY user query.
-        Runs BM25 + Vector for ALL query
+        Runs BM25 + Vector + Summary for ALL query
         variants IN PARALLEL via ThreadPoolExecutor, RRF-merges everything
         (weighted by classification), reranks against the ORIGINAL query,
-        returns parent chunks.
+        returns parent chunks which guarantees at least this many non-summary (real code) docs
+        survive into the final result.
         """
 
         symbol = detect_symbol_serach(original_query)
@@ -128,17 +131,18 @@ class HybridRetriever():
                     q = future_to_query[future]
                     print(f"[Retriever] Search failed for query {q!r}: {e}")
                     
-        merged_children = self._rrf_merge(bm25_lists,vector_lists,summary_lists,classification,top_n=20)
+        merged_children = self._rrf_merge(bm25_lists,vector_lists,summary_lists,classification,confidence,top_n=20)
 
         if self.re_ranker is None:
             print("[Retriever] Reranker unavailable — returning RRF-merged results.")
-            return self._fetch_parents(merged_children[:final_k])
+            floored = self._enforce_code_floor(merged_children,final_k,min_code_slots)
+            return self._fetch_parents(floored)
         
         pairs = [[original_query,doc.page_content] for doc in merged_children]
         scores = self.re_ranker.predict(pairs)
-        ranked = sorted(zip(merged_children,scores),key=lambda x:x[1],reverse=True)
+        ranked = [doc for doc,_ in sorted(zip(merged_children,scores),key=lambda x:x[1],reverse=True)]
 
-        top_children = [doc for doc, _ in ranked[:final_k] ]
+        top_children = self._enforce_code_floor(ranked,final_k,min_code_slots)
         parent_docs = self._fetch_parents(top_children)
         # for doc in parent_docs:
         #     print(doc.page_content)
@@ -198,16 +202,26 @@ class HybridRetriever():
                    vector_lists:list[list[Document]],
                    summary_lists:list[list[Document]],
                    classification:str,
+                   confidence:float =1.0,
                    k:int = 60,
                    top_n:int = 10)-> list[Document]:
-        """ Reciprocal Rank Fusion — merges three ranked nasted lists. accept N lists per source
-        Classification adjusts relative BM25 vs vector weight instead of
-        gating either source out entirely."""
+        """Reciprocal Rank Fusion — merges three ranked nested lists.
+        Classification sets a target weight profile; confidence controls how far
+        we commit to it. Low confidence blends back toward neutral (1.0/1.0/1.0)
+        instead of fully trusting a classification the model itself wasn't sure about."""
         
+        NEUTRAL = {"bm25":1.0, "vector":1.0, "summary":1.0}
         if classification == "CODE_SPECIFIC":
-            bm25_weight , vector_weight , summary_weight = 1.5, 1.1 , 0.4 
+            target = {"bm25": 1.5, "vector": 1.1, "summary": 0.4}
         else:
-            bm25_weight , vector_weight , summary_weight = 0.9, 0.7 , 1.5 
+            target = {"bm25": 0.9, "vector": 0.7, "summary": 1.5} 
+
+        c= max(0.0,min(1.0,confidence))
+        bm25_weight    = NEUTRAL["bm25"]    + c * (target["bm25"]    - NEUTRAL["bm25"])
+        vector_weight  = NEUTRAL["vector"]  + c * (target["vector"]  - NEUTRAL["vector"])
+        summary_weight = NEUTRAL["summary"] + c * (target["summary"] - NEUTRAL["summary"])
+        
+        SUMMARY_TYPES = {"file_summary", "folder_summary", "repo_summary"}
 
         scores : dict[str,float] = {}
         doc_map : dict[str,Document] = {}
@@ -229,7 +243,7 @@ class HybridRetriever():
                     content_len = len(doc.page_content)
 
                     is_markdown = file_path.endswith(".md") or language == "markdown" or "readme" in file_path
-                    if is_markdown and doc.metadata.get("chunk_type") != "summary":
+                    if is_markdown and doc.metadata.get("chunk_type") not in SUMMARY_TYPES:
                         base_score *= 0.40
                     if content_len > 1500:
                         base_score *= 0.60
@@ -252,4 +266,38 @@ class HybridRetriever():
 
         scored = sorted(matches,key= lambda d:d.page_content.count(symbol),reverse=True)
         top= scored[:k]
-        return self._fetch_parents(top)    
+        return self._fetch_parents(top)
+
+    def _enforce_code_floor(self, orderd_docs:list[Document],final_k:int,min_code_slots:int)->list[Document]:
+        """ordered_docs is already sorted best -> worst (post-rerank or post-RRF).
+        If the top final_k has fewer than min_code_slots real code docs, swap in
+        the best-scoring code docs from beyond final_k, evicting the weakest
+        summary docs currently occupying a slot."""
+        SUMMARY_TYPES = {"file_summary", "folder_summary", "repo_summary"}
+        
+        top = orderd_docs[:final_k]
+        code_in_top = [d for d in top if d.metadata.get("chunk_type") not in SUMMARY_TYPES]
+        if len(code_in_top) >= min_code_slots:
+            return top
+        
+        remaining_code = [d for d in orderd_docs[final_k:] if d.metadata.get("chunk_type") not in SUMMARY_TYPES]
+        if not remaining_code:
+            return top
+        
+        result = list(top)
+        needed = min_code_slots - len(code_in_top)
+
+        for _ in range(needed):
+            if not remaining_code:
+                break
+            evict_indx=None
+            for i in range(len(result)- 1, -1 ,-1):
+                if result[i].metadata.get("chunk_type") in SUMMARY_TYPES:
+                    evict_indx = i
+                    break
+            if evict_indx is None:
+                break
+            result.pop(evict_indx)
+            result.append(remaining_code.pop(0))
+        
+        return result
