@@ -80,43 +80,43 @@
     "expected_classification": "CONCEPTUAL"
   },
    {
-    "repo_id": "3",
-    "question": "Where is the Navbar component imported and rendered inside App.jsx?",
+    "repo_id": "a0c5b698",
+    "question": "Where is the Stripe customer created and saved to the user document during order placement?",
     "expected_classification": "CODE_SPECIFIC"
   },
   {
-    "repo_id": "3",
-    "question": "Why does main.jsx wrap the App component in React.StrictMode during development?",
+    "repo_id": "a0c5b698",
+    "question": "Why does the app use two separate Stripe secret keys (STRIPE_SECRET_KEY and STRIPE_SECRET_KEY2) instead of one shared key for orders and reservations?",
     "expected_classification": "CONCEPTUAL"
   },
   {
-    "repo_id": "3",
-    "question": "Where is the logo image source referenced from the assets module inside Navbar.jsx?",
-    "expected_classification": "CODE_SPECIFIC"
+    "repo_id": "a0c5b698",
+    "question": "Where is the authMiddleware function defined that verifies the JWT token?",
+    "expected_classification": "SYMBOL_LOOKUP"
   },
   {
-    "repo_id": "3",
-    "question": "Why is the React plugin from @vitejs/plugin-react registered in vite.config.js instead of using plain esbuild JSX transforms?",
+    "repo_id": "a0c5b698",
+    "question": "Why is the reservation limited to a maximum of 5 bookings for the same date and time slot before confirming?",
     "expected_classification": "CONCEPTUAL"
   },
   {
-    "repo_id": "3",
-    "question": "Where is the box-sizing and margin/padding reset applied globally in the project's CSS?",
+    "repo_id": "a0c5b698",
+    "question": "Where is the cartData field updated when a user adds an item to their cart in the backend?",
     "expected_classification": "CODE_SPECIFIC"
   },
   {
-    "repo_id": "3",
-    "question": "Why does eslint.config.js disable the react/jsx-no-target-blank rule and configure react-refresh/only-export-components with allowConstantExport?",
+    "repo_id": "a0c5b698",
+    "question": "How does the frontend determine whether a food item should display as deactivated when its category is inactive?",
     "expected_classification": "CONCEPTUAL"
   },
   {
-    "repo_id": "3",
-    "question": "Where is the root DOM element that React mounts the app into defined?",
-    "expected_classification": "CODE_SPECIFIC"
+    "repo_id": "a0c5b698",
+    "question": "Where is the old food image deleted from disk when an admin updates a dish with a new image?",
+    "expected_classification": "SYMBOL_LOOKUP"
   },
   {
-    "repo_id": "3",
-    "question": "Why does the project include react-router-dom as a dependency even though no routes are currently defined in App.jsx?",
+    "repo_id": "a0c5b698",
+    "question": "Why does the order verification flow delete the order document instead of just marking it unpaid when payment fails?",
     "expected_classification": "CONCEPTUAL"
   }
 ]
