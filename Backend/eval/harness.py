@@ -30,6 +30,7 @@ def collect_samples()-> list[dict]:
              "response":result["answer"],
              "repo_id":q["repo_id"],
              "expected_classification":q.get("expected_classification"),
+             "actual_classification":q.get("classification")
          })
 
      return samples

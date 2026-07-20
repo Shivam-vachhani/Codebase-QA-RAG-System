@@ -110,7 +110,8 @@ class RAGservice():
                 }
                 for d in docs
             ],
-            "summaries": { path:summary for path, summary in file_summaries.items() } 
+            "summaries": { path:summary for path, summary in file_summaries.items() } ,
+            "classification": classification,
         }
 
         if include_context:

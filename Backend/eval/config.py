@@ -1,5 +1,4 @@
 from eval import _ragas_compat
-import os 
 from langchain_openai import ChatOpenAI
 from langchain_openai.embeddings import OpenAIEmbeddings
 from ragas.llms import LangchainLLMWrapper
@@ -22,4 +21,4 @@ def get_judge_embeddings():
     return LangchainEmbeddingsWrapper(raw_embeddings)
 
 
-EVAL_RUN_CONFIG =RunConfig(max_workers=4,timeout=180)
+EVAL_RUN_CONFIG =RunConfig(max_workers=4,timeout=180,max_retries=5)
