@@ -1,5 +1,6 @@
+from eval import _ragas_compat
 import os 
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_openai.embeddings import OpenAIEmbeddings
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
@@ -9,16 +10,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-JUDGE_LLM_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+JUDGE_LLM_MODEL = "gpt-4.1-nano"
 
 def get_judge_llm() :
-    raw_llm = ChatGroq(
-        model= JUDGE_LLM_MODEL,
-        temperature=0,
-        groq_api_key = GROQ_API_KEY,
-    )
+    raw_llm = ChatOpenAI(model= JUDGE_LLM_MODEL,temperature=0)
     return LangchainLLMWrapper(raw_llm)
 
 def get_judge_embeddings():
@@ -26,4 +22,4 @@ def get_judge_embeddings():
     return LangchainEmbeddingsWrapper(raw_embeddings)
 
 
-EVAL_RUN_CONFIG =RunConfig(max_workers=3,timeout=180)
+EVAL_RUN_CONFIG =RunConfig(max_workers=4,timeout=180)

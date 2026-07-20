@@ -70,9 +70,16 @@ class RAGservice():
             )
             classification = analysis.classification
             
+        if not docs:
+            return {
+             "answer": "Not found in the indexed codebase.",
+             "sources": [],
+             "summaries": {}
+            } 
+           
         t1=time.time()
         print(f"[TIMER] Retrieval (BM25 + Vector + Rerank) total : {t1-t0:.2f}s (classification={classification})")
-
+    
         file_paths = list({d.metadata.get("file_path") for d in docs if {d.metadata.get("file_path")}})
         file_summaries = get_file_summaries_by_path(self.repo_id,file_paths)
         t2 = time.time()

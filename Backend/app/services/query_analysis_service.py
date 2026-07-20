@@ -24,7 +24,9 @@ ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
     2. Generate 2-3 alternative search queries that would help retrieve relevant
        code. Use real function/class/file names from the context when relevant,
        and include technical synonyms (e.g. "login" -> "authenticate", "auth").
-    
+     
+    CRITICAL NOTE:Generate AT MOST 3 alternative search queries — never more than 3, even if more come to mind.
+     
     Keep expanded queries short (5-10 words), phrased as search queries not
     sentences."""),
         ("human", "Codebase context:\n{context}\n\nQuestion: {question}")

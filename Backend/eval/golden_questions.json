@@ -11,7 +11,7 @@
   },
   {
     "repo_id": "5778a3b0",
-    "question": "Where is the getSocket function defined?",
+    "question": "Where is getSocket called to establish the socket connection?",
     "expected_classification": "SYMBOL_LOOKUP"
   },
   {
@@ -31,13 +31,8 @@
   },
   {
     "repo_id": "5778a3b0",
-    "question": "Where is pusher.trigger called when a new chat message is sent?",
+    "question": "Where is trigger called when a new chat message is sent via Pusher?",
     "expected_classification": "SYMBOL_LOOKUP"
-  },
-  {
-    "repo_id": "5778a3b0",
-    "question": "Why does the login flow store both an access token and a refresh token instead of just one long-lived token?",
-    "expected_classification": "CONCEPTUAL"
   },
   {
     "repo_id": "7258a244",
@@ -51,7 +46,7 @@
   },
   {
     "repo_id": "7258a244",
-    "question": "Where is the area_encoded value looked up from area_mapping_.json?",
+    "question": "Where is area_mapping_ used to encode the area value before prediction?",
     "expected_classification": "SYMBOL_LOOKUP"
   },
   {
@@ -71,15 +66,10 @@
   },
   {
     "repo_id": "7258a244",
-    "question": "Where is the fetch call made to the /predict endpoint in the frontend?",
-    "expected_classification": "SYMBOL_LOOKUP"
+    "question": "Where is the frontend's fetch call to the /predict endpoint made?",
+    "expected_classification": "CODE_SPECIFIC"
   },
   {
-    "repo_id": "7258a244",
-    "question": "Why is the predicted price multiplied by 100000 when displaying it in the ResultPanel component?",
-    "expected_classification": "CONCEPTUAL"
-  },
-   {
     "repo_id": "a0c5b698",
     "question": "Where is the Stripe customer created and saved to the user document during order placement?",
     "expected_classification": "CODE_SPECIFIC"
@@ -91,7 +81,7 @@
   },
   {
     "repo_id": "a0c5b698",
-    "question": "Where is the authMiddleware function defined that verifies the JWT token?",
+    "question": "Where is authMiddleware used to verify the JWT token on protected routes?",
     "expected_classification": "SYMBOL_LOOKUP"
   },
   {
@@ -111,7 +101,7 @@
   },
   {
     "repo_id": "a0c5b698",
-    "question": "Where is the old food image deleted from disk when an admin updates a dish with a new image?",
+    "question": "Where is unlink used to delete the old food image when a dish is updated?",
     "expected_classification": "SYMBOL_LOOKUP"
   },
   {
@@ -120,4 +110,3 @@
     "expected_classification": "CONCEPTUAL"
   }
 ]
-

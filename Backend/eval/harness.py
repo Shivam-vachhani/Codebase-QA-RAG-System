@@ -4,7 +4,7 @@ from app.services.rag_service import get_rag_service
 GOLDEN_SET_PATH = pathlib.Path(__file__).parent / "golden_questions.json"
 COLLECTED_PATH = pathlib.Path(__file__).parent / "collected_samples.json"
 
-model = "gpt-40"
+model = "gpt-4o"
 
 def load_golden_questions()-> list[dict]:
     with open(GOLDEN_SET_PATH) as f:
@@ -36,7 +36,7 @@ def collect_samples()-> list[dict]:
 
 if __name__ == "__main__":
     samples = collect_samples()
-    with open (COLLECTED_PATH) as f:
+    with open (COLLECTED_PATH,"w") as f:
         json.dump(samples,f,indent=2)
     print(f"\nCollected {len(samples)} samples -> {COLLECTED_PATH}")
 

@@ -9,14 +9,18 @@ load_dotenv()
 
 def llm_model(model:str):
     if model == "gpt-4o":
-            return ChatOpenAI(model="gpt-4o-mini")
+            return ChatOpenAI(model="gpt-4o-mini",temperature=0.2)
     elif model == "qwen-2.5":
         return ChatOllama(model="codellama:7b",base_url=config.OLLAMA_HOST)
     
 _ANTI_HALLUCINATION_RULE ="""
-    -CRITICAL: Never invent, reconstruct, or right out any function body, code line or exact implementation details that is not present in VERBATIM in the context below.
-    -If a context block's "Chunk type" is file_summary, folder_summary or repo_summary, it is PROSE DESCRIPTION of a file, not the file's actual code. you may describe what summary says, but you must NOT produce code block that claims to be file's implementation - you have not seen that code.
-    -If the only availble context for part of the question is summary (no parant/child/code chunks), say so explicitly (e.g "Based on file summary,this function likey does X - the exact implimentaiont isn't the retrived context") in stead of fabricated plausible-looking snnipet.  
+    -CRITICAL: Never invent, reconstruct, or write out any function body, code line, or exact implementation detail that is not present VERBATIM in the context below.
+    -If a context block's "Chunk type" is file_summary, folder_summary, or repo_summary, it is a PROSE DESCRIPTION of a file, not the file's actual code. You may describe what the summary says, but you must NOT produce a code block that claims to be the file's implementation - you have not seen that code.
+    -If the only available context for part of the question is a summary (no parent/child/code chunks), say so explicitly (e.g. "Based on the file summary, this function likely does X - the exact implementation isn't in the retrieved context") instead of fabricating a plausible-looking snippet.
+    -For "why" questions: first check whether the retrieved context shows the actual mechanism/logic (a conditional, a config value, a function body) relevant to the question.
+        - If it does, answer using that real code/logic as the "what happens" - even if the underlying business *rationale* isn't stated. Only the rationale/motivation part should be hedged, e.g. "The code does X when Y (shown above); the specific reason the team chose this isn't stated in the context, but a likely reason is..."
+        - Only use the full fallback "It seems the exact information is not provided in the codebase, but most likely..." when NO related code, config, or logic for the question exists anywhere in the context - not merely because the *reasoning* behind a shown mechanism isn't spelled out.
+    -If a question references a wrong or nonexistent function, class, variable, import, export, or module name, but the context contains a close match, respond "Not found in codebase, but you might be talking about..." and point to the close match. If there's no related code and no close match, reply "Not found in codebase."
 """
 
 CODE_SPECIFIC_PROMPT=ChatPromptTemplate([
